@@ -60,8 +60,8 @@
   .month-nav { display: flex; align-items: center; gap: 8px; }
   .month-nav button {
     background: var(--card); border: 1px solid var(--border); color: var(--text);
-    width: 36px; height: 36px; border-radius: 10px; font-size: 1rem; cursor: pointer;
-    transition: background .15s;
+    padding: 0 14px; height: 36px; border-radius: 10px; font-size: .85rem; cursor: pointer;
+    transition: background .15s; white-space: nowrap;
   }
   .month-nav button:hover { background: var(--card2); }
   .month-label {
@@ -189,6 +189,26 @@
   .muted { color: var(--muted); font-size: .85rem; }
   .empty { color: var(--muted); font-size: .85rem; text-align: center; padding: 16px 0; }
 
+  /* Aviso de límite superado */
+  .alert {
+    background: rgba(224, 93, 93, .12); border: 1px solid rgba(224, 93, 93, .45);
+    color: var(--red); border-radius: var(--radius); padding: 12px 16px;
+    margin-bottom: 16px; font-size: .9rem;
+  }
+
+  /* Barra de deshacer */
+  #undoBar {
+    position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 80px);
+    background: #263238; color: #fff; border-radius: 12px; padding: 10px 16px;
+    display: flex; align-items: center; gap: 14px; font-size: .9rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,.3); transition: transform .25s; z-index: 50;
+  }
+  #undoBar.show { transform: translate(-50%, 0); }
+  #undoBar button {
+    background: none; border: none; color: #7fd4a0; font-weight: 700;
+    font-size: .9rem; cursor: pointer; text-transform: uppercase; letter-spacing: .04em;
+  }
+
   .full-width { grid-column: 1 / -1; }
   .hidden { display: none !important; }
 
@@ -205,9 +225,9 @@
   <header>
     <h1><span class="emoji">🏠</span> Gastos de Casa</h1>
     <div class="month-nav" id="monthNav">
-      <button id="prevMonth" title="Mes anterior">‹</button>
+      <button id="prevMonth">‹ Mes anterior</button>
       <div class="month-label" id="monthLabel"></div>
-      <button id="nextMonth" title="Mes siguiente">›</button>
+      <button id="nextMonth">Mes siguiente ›</button>
     </div>
   </header>
 
@@ -219,6 +239,8 @@
 
   <!-- ============ PESTAÑA: ESTE MES ============ -->
   <div id="tabMes">
+
+    <div id="budgetAlert"></div>
 
     <div class="summary" id="summary"></div>
 
@@ -305,6 +327,10 @@
             <button class="primary" id="addVar">Añadir</button>
           </div>
         </div>
+        <div class="row" style="margin-top:4px;">
+          <div style="flex:2;"><input type="text" id="varSearch" placeholder="🔍 Buscar por concepto o categoría…"></div>
+          <div style="display:flex; align-items:center;"><span class="muted" id="varFilterTotal"></span></div>
+        </div>
         <ul class="expense-list" id="varList"></ul>
       </div>
 
@@ -340,6 +366,15 @@
           <button id="theme-light">☀️ Claro</button>
           <button id="theme-dark">🌙 Oscuro</button>
           <button id="theme-auto">🌗 Automático</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>⚖️ Reparto de los gastos compartidos</h2>
+        <p class="muted" style="margin-bottom:10px;">Cómo se calcula la parte de cada uno (se ve en el ahorro por persona del Resumen). Los gastos marcados "Solo Iker" o "Solo Laura" siempre los paga esa persona entera.</p>
+        <div class="tabs" style="margin-bottom:0;">
+          <button id="split-mitad">50 / 50</button>
+          <button id="split-sueldo">Según sueldo</button>
         </div>
       </div>
 
@@ -394,6 +429,9 @@
   <footer id="storageNote">Los datos se guardan automáticamente.</footer>
 </div>
 
+<!-- Barra de deshacer -->
+<div id="undoBar"><span id="undoMsg"></span><button id="undoBtn">Deshacer</button></div>
+
 <script>
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
@@ -407,6 +445,7 @@
         { id: 'cap1', name: 'Caprichos Iker', amount: 250 },
         { id: 'cap2', name: 'Caprichos Laura', amount: 250 }
       ],                    // [{id, name, amount}]
+      splitMode: 'mitad',   // 'mitad' (50/50) o 'sueldo' (proporcional al sueldo)
       budgets: {},          // { "Supermercado": 400, ... } límite mensual por categoría
       customCats: {},       // { "Mascotas": {emoji, color} } categorías propias
       hiddenCats: [],       // categorías de serie ocultadas
@@ -635,14 +674,17 @@
     const incomeOf = k => { const [s1, s2] = salOf(state.months[k]); return s1 + s2; };
     const persOf = (k, who) => (state.months[k].variable || []).filter(v => v.who === who).reduce((s, v) => s + v.amount, 0);
 
-    // Ahorro acumulado de cada uno: mitad de lo compartido + lo personal de cada cual
+    // Ahorro acumulado de cada uno: lo compartido según el modo de reparto
+    // elegido en Ajustes (50/50 o proporcional al sueldo) + lo personal de cada cual
+    const porSueldo = state.splitMode === 'sueldo';
     let allTimeSavings = 0, ahorroAcum1 = 0, ahorroAcum2 = 0;
     allKeys.forEach(k => {
       const [s1, s2] = salOf(state.months[k]);
       const p1 = persOf(k, 'p1'), p2 = persOf(k, 'p2');
       const shared = spentOf(k) - p1 - p2;
-      ahorroAcum1 += s1 - shared / 2 - p1;
-      ahorroAcum2 += s2 - shared / 2 - p2;
+      const cuota1 = porSueldo && (s1 + s2) > 0 ? s1 / (s1 + s2) : 0.5;
+      ahorroAcum1 += s1 - shared * cuota1 - p1;
+      ahorroAcum2 += s2 - shared * (1 - cuota1) - p2;
       allTimeSavings += incomeOf(k) - spentOf(k);
     });
 
@@ -740,42 +782,12 @@
     // Fecha por defecto del formulario: hoy (o día 1 si miras otro mes)
     $('varDate').value = current === monthKey(new Date()) ? todayIso() : current + '-01';
 
-    const whoLabel = w => w === 'p1' ? n1 : w === 'p2' ? n2 : 'Ambos';
-    const fmtDay = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '';
-    const catOpts = sel => {
-      const cs = allCats();
-      if (sel && !cs.includes(sel)) cs.unshift(sel);   // no perder la categoría del gasto aunque esté oculta
-      return cs.map(c => `<option value="${esc(c)}" ${c === sel ? 'selected' : ''}>${catInfo(c).emoji} ${esc(c)}</option>`).join('');
-    };
-
     // Desplegable de categorías del formulario
     const catSel = $('varCat');
     const prevCat = catSel.value;
     catSel.innerHTML = allCats().map(c => `<option value="${esc(c)}">${catInfo(c).emoji} ${esc(c)}</option>`).join('');
     if ([...catSel.options].some(o => o.value === prevCat)) catSel.value = prevCat;
-    const whoOpts = sel => [['ambos', 'Ambos (a medias)'], ['p1', 'Solo ' + n1], ['p2', 'Solo ' + n2]]
-      .map(([val, lbl]) => `<option value="${val}" ${val === sel ? 'selected' : ''}>${lbl}</option>`).join('');
-
-    const sorted = m.variable.slice().sort((a, b) => ((b.date || '0') + b.id).localeCompare((a.date || '0') + a.id));
-    $('varList').innerHTML = m.variable.length === 0
-      ? '<div class="empty">No hay gastos variables este mes. ¡Añade el primero!</div>'
-      : sorted.map(v => v.id === editingVarId
-        ? `<li style="flex-wrap:wrap;">
-            <input type="text" id="ev-name" value="${esc(v.name)}" style="flex:2; min-width:110px;">
-            <input type="number" id="ev-amount" value="${v.amount}" min="0" step="0.01" style="width:90px;">
-            <input type="date" id="ev-date" value="${v.date || ''}" style="width:150px;">
-            <select id="ev-cat" style="width:auto;">${catOpts(v.cat)}</select>
-            <select id="ev-who" style="width:auto;">${whoOpts(v.who)}</select>
-            <button class="paid-toggle paid" data-savevar="${v.id}">✓ Guardar</button>
-            <button class="del-btn" data-cancelvar="${v.id}" title="Cancelar">✕</button>
-          </li>`
-        : `<li>
-          <span class="expense-name">${esc(v.name)}<span class="cat" style="color:${catInfo(v.cat).color};">${catInfo(v.cat).emoji} ${esc(v.cat)}${v.date ? ' · ' + fmtDay(v.date) : ''}</span></span>
-          <span class="expense-who">${whoLabel(v.who)}</span>
-          <span class="expense-amount">${fmt(v.amount)}</span>
-          <button class="del-btn" data-editvar="${v.id}" title="Editar">✎</button>
-          <button class="del-btn" data-delvar="${v.id}" title="Eliminar">✕</button>
-        </li>`).join('');
+    buildVarList();
 
     const budgets = state.budgets || {};
     const cats = {};
@@ -808,6 +820,13 @@
           <div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${pct}%; background:${fill};"></div></div>
         </div>`;
         }).join('');
+
+    // Aviso arriba del todo si alguna categoría supera su límite este mes
+    const overs = entries
+      .filter(([c, val]) => c !== 'Fijos' && (budgets[c] || 0) > 0 && val > budgets[c])
+      .map(([c, val]) => `${catInfo(c).emoji} ${esc(c)}: <b>${fmt(val)}</b> de ${fmt(budgets[c])}`);
+    $('budgetAlert').innerHTML = overs.length
+      ? `<div class="alert">⚠️ Límite superado — ${overs.join(' · ')}</div>` : '';
   }
 
   function renderResumen() {
@@ -816,8 +835,8 @@
     const n1 = displayName(state.name1, 'Persona 1');
     const n2 = displayName(state.name2, 'Persona 2');
 
-    // Parte de cada uno del ahorro total (reparto 50/50 con personales)
-    const splitSub = `${n1}: ${fmt(o.ahorroAcum1)} · ${n2}: ${fmt(o.ahorroAcum2)}`;
+    // Parte de cada uno del ahorro total, según el modo de reparto de Ajustes
+    const splitSub = `${n1}: ${fmt(o.ahorroAcum1)} · ${n2}: ${fmt(o.ahorroAcum2)} (${state.splitMode === 'sueldo' ? 'según sueldo' : '50/50'})`;
 
     const yearClass = o.yearSavings >= 0 ? 'green' : 'red';
     const totClass = o.allTimeSavings >= 0 ? 'green' : 'red';
@@ -886,6 +905,73 @@
         </table>`;
   }
 
+  // ---------- Deshacer borrados ----------
+  let undoSnapshot = null, undoTimer = null;
+  function offerUndo(msg) {
+    undoSnapshot = JSON.stringify(state);
+    $('undoMsg').textContent = msg;
+    $('undoBar').classList.add('show');
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(hideUndo, 6000);
+  }
+  function hideUndo() {
+    $('undoBar').classList.remove('show');
+    undoSnapshot = null;
+  }
+  $('undoBtn').addEventListener('click', () => {
+    if (!undoSnapshot) return;
+    state = JSON.parse(undoSnapshot);
+    hideUndo();
+    save(); render();
+  });
+
+  // Lista de gastos variables del mes (con filtro de búsqueda)
+  let varFilter = '';
+  function buildVarList() {
+    const m = peekMonth(current);
+    const n1 = displayName(state.name1, 'Persona 1');
+    const n2 = displayName(state.name2, 'Persona 2');
+    const whoLabel = w => w === 'p1' ? n1 : w === 'p2' ? n2 : 'Ambos';
+    const fmtDay = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '';
+    const catOpts = sel => {
+      const cs = allCats();
+      if (sel && !cs.includes(sel)) cs.unshift(sel);   // no perder la categoría del gasto aunque esté oculta
+      return cs.map(c => `<option value="${esc(c)}" ${c === sel ? 'selected' : ''}>${catInfo(c).emoji} ${esc(c)}</option>`).join('');
+    };
+    const whoOpts = sel => [['ambos', 'Ambos (a medias)'], ['p1', 'Solo ' + n1], ['p2', 'Solo ' + n2]]
+      .map(([val, lbl]) => `<option value="${val}" ${val === sel ? 'selected' : ''}>${lbl}</option>`).join('');
+
+    const q = varFilter.trim().toLowerCase();
+    const items = m.variable.filter(v => !q || v.name.toLowerCase().includes(q) || v.cat.toLowerCase().includes(q));
+    const sorted = items.slice().sort((a, b) => ((b.date || '0') + b.id).localeCompare((a.date || '0') + a.id));
+
+    $('varList').innerHTML = m.variable.length === 0
+      ? '<div class="empty">No hay gastos variables este mes. ¡Añade el primero!</div>'
+      : sorted.length === 0
+      ? '<div class="empty">Ningún gasto coincide con la búsqueda.</div>'
+      : sorted.map(v => v.id === editingVarId
+        ? `<li style="flex-wrap:wrap;">
+            <input type="text" id="ev-name" value="${esc(v.name)}" style="flex:2; min-width:110px;">
+            <input type="number" id="ev-amount" value="${v.amount}" min="0" step="0.01" style="width:90px;">
+            <input type="date" id="ev-date" value="${v.date || ''}" style="width:150px;">
+            <select id="ev-cat" style="width:auto;">${catOpts(v.cat)}</select>
+            <select id="ev-who" style="width:auto;">${whoOpts(v.who)}</select>
+            <button class="paid-toggle paid" data-savevar="${v.id}">✓ Guardar</button>
+            <button class="del-btn" data-cancelvar="${v.id}" title="Cancelar">✕</button>
+          </li>`
+        : `<li>
+          <span class="expense-name">${esc(v.name)}<span class="cat" style="color:${catInfo(v.cat).color};">${catInfo(v.cat).emoji} ${esc(v.cat)}${v.date ? ' · ' + fmtDay(v.date) : ''}</span></span>
+          <span class="expense-who">${whoLabel(v.who)}</span>
+          <span class="expense-amount">${fmt(v.amount)}</span>
+          <button class="del-btn" data-editvar="${v.id}" title="Editar">✎</button>
+          <button class="del-btn" data-delvar="${v.id}" title="Eliminar">✕</button>
+        </li>`).join('');
+
+    const tot = items.reduce((s, v) => s + v.amount, 0);
+    $('varFilterTotal').textContent = q ? `${items.length} ${items.length === 1 ? 'gasto' : 'gastos'} · ${fmt(tot)}` : '';
+  }
+  $('varSearch').addEventListener('input', e => { varFilter = e.target.value; buildVarList(); });
+
   function renderAjustes() {
     const hidden = state.hiddenCats || [];
     const customs = state.customCats || {};
@@ -905,7 +991,15 @@
       </li>`;
     });
     $('catList').innerHTML = html || '<div class="empty">Sin categorías.</div>';
+
+    // Modo de reparto activo
+    const mode = state.splitMode === 'sueldo' ? 'sueldo' : 'mitad';
+    $('split-mitad').classList.toggle('active', mode === 'mitad');
+    $('split-sueldo').classList.toggle('active', mode === 'sueldo');
   }
+
+  $('split-mitad').addEventListener('click', () => { state.splitMode = 'mitad'; save(); renderAjustes(); });
+  $('split-sueldo').addEventListener('click', () => { state.splitMode = 'sueldo'; save(); renderAjustes(); });
 
   $('addCat').addEventListener('click', () => {
     const name = $('newCatName').value.trim();
@@ -1040,13 +1134,15 @@
   document.addEventListener('click', e => {
     const t = e.target;
     if (t.dataset.delfixed) {
-      if (confirm('¿Eliminar este gasto fijo?')) {
-        state.fixed = state.fixed.filter(f => f.id !== t.dataset.delfixed);
-        save(); render();
-      }
+      const f = state.fixed.find(x => x.id === t.dataset.delfixed);
+      offerUndo(`Gasto fijo "${f ? f.name : ''}" eliminado`);
+      state.fixed = state.fixed.filter(x => x.id !== t.dataset.delfixed);
+      save(); render();
     } else if (t.dataset.delvar) {
       const m = monthData(current);
-      m.variable = m.variable.filter(v => v.id !== t.dataset.delvar);
+      const v = m.variable.find(x => x.id === t.dataset.delvar);
+      offerUndo(`Gasto "${v ? v.name : ''}" eliminado`);
+      m.variable = m.variable.filter(x => x.id !== t.dataset.delvar);
       save(); render();
     } else if (t.dataset.editvar) {
       editingVarId = t.dataset.editvar;
@@ -1076,10 +1172,11 @@
       if (!state.hiddenCats) state.hiddenCats = [];
       if (!state.customCats) state.customCats = {};
       if (c in state.customCats) {
-        if (!confirm(`¿Eliminar la categoría "${c}"? Los gastos ya apuntados con ella se conservan (con icono genérico).`)) return;
+        offerUndo(`Categoría "${c}" eliminada`);
         delete state.customCats[c];
         if (state.budgets) delete state.budgets[c];
       } else {
+        offerUndo(`Categoría "${c}" ocultada`);
         state.hiddenCats.push(c);
       }
       save(); render();
@@ -1093,6 +1190,7 @@
         ? `¿Borrar ${monthLabel(key)} del registro? Se eliminarán sus ${nVar} gastos variables y su sueldo guardado.`
         : `¿Borrar ${monthLabel(key)} del registro?`;
       if (confirm(msg)) {
+        offerUndo(`${monthLabel(key)} borrado del registro`);
         delete state.months[key];
         refreshDefaults();
         save(); render();
@@ -1162,6 +1260,11 @@
     else window.addEventListener('pywebviewready', boot);
   } else {
     boot();
+  }
+
+  // Modo sin conexión: guarda la app en el dispositivo
+  if ('serviceWorker' in navigator && !window.__IS_APP__) {
+    navigator.serviceWorker.register('sw.js').catch(e => console.warn('Sin modo offline:', e));
   }
 })();
 </script>
