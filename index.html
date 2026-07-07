@@ -201,6 +201,7 @@
   <div class="tabs">
     <button id="tabBtnMes" class="active">📅 Este mes</button>
     <button id="tabBtnResumen">📈 Resumen</button>
+    <button id="tabBtnAjustes">⚙️ Ajustes</button>
   </div>
 
   <!-- ============ PESTAÑA: ESTE MES ============ -->
@@ -245,8 +246,6 @@
           </div>
         </div>
         <p class="muted" id="totalIncome"></p>
-
-        <div class="split-box" id="splitBox"></div>
       </div>
 
       <!-- GASTOS FIJOS -->
@@ -283,17 +282,7 @@
           </div>
           <div style="min-width:130px;">
             <label>Categoría</label>
-            <select id="varCat">
-              <option value="Supermercado">🛒 Supermercado</option>
-              <option value="Restaurantes">🍽️ Restaurantes</option>
-              <option value="Transporte">🚌 Transporte</option>
-              <option value="Gasolina">⛽ Gasolina</option>
-              <option value="Ocio">🎉 Ocio</option>
-              <option value="Ropa">👕 Ropa</option>
-              <option value="Salud">💊 Salud</option>
-              <option value="Hogar">🛋️ Hogar</option>
-              <option value="Otros">📦 Otros</option>
-            </select>
+            <select id="varCat"></select>
           </div>
           <div style="min-width:110px;">
             <label>¿De quién es?</label>
@@ -312,10 +301,44 @@
         <div class="cat-bars" id="catBars"></div>
       </div>
 
-      <!-- SINCRONIZACIÓN -->
-      <div class="card full-width">
+    </div>
+  </div>
+
+  <!-- ============ PESTAÑA: AJUSTES ============ -->
+  <div id="tabAjustes" class="hidden">
+    <div class="grid">
+
+      <div class="card">
+        <h2>🏷️ Categorías</h2>
+        <p class="muted" style="margin-bottom:10px;">Quita las que no uséis (con ↩ se recuperan) o crea nuevas con su emoji y color.</p>
+        <ul class="expense-list" id="catList"></ul>
+        <div class="row" style="margin-top:12px;">
+          <div style="flex:none; width:64px;"><input type="text" id="newCatEmoji" placeholder="🐶" maxlength="4" style="text-align:center;"></div>
+          <div style="flex:2;"><input type="text" id="newCatName" placeholder="Mascotas"></div>
+          <div style="flex:none; width:64px;"><input type="color" id="newCatColor" value="#e91e63" style="height:40px; padding:3px;" title="Color de la categoría"></div>
+        </div>
+        <button class="primary" id="addCat" style="margin-top:10px;">Añadir categoría</button>
+      </div>
+
+      <div class="card">
         <h2>☁️ Sincronización entre dispositivos</h2>
         <div id="syncBody"></div>
+      </div>
+
+      <div class="card">
+        <h2>💾 Copia de seguridad</h2>
+        <p class="muted" style="margin-bottom:10px;">Descarga un archivo con todos vuestros datos, o restaura una copia guardada.</p>
+        <div class="row">
+          <div><button class="primary" id="exportData">⬇️ Exportar copia</button></div>
+          <div><button class="primary" id="importBtn" style="background:var(--orange);">⬆️ Importar copia</button></div>
+        </div>
+        <input type="file" id="importFile" accept=".json,application/json" style="display:none;">
+      </div>
+
+      <div class="card">
+        <h2>⚠️ Zona peligrosa</h2>
+        <p class="muted" style="margin-bottom:10px;">Borra todos los datos de la app. Si estáis sincronizados, se borran también de la nube y del resto de dispositivos.</p>
+        <button class="primary" id="resetAll" style="background:var(--red);">Borrar todos los datos</button>
       </div>
 
     </div>
@@ -362,6 +385,8 @@
         { id: 'cap2', name: 'Caprichos Laura', amount: 250 }
       ],                    // [{id, name, amount}]
       budgets: {},          // { "Supermercado": 400, ... } límite mensual por categoría
+      customCats: {},       // { "Mascotas": {emoji, color} } categorías propias
+      hiddenCats: [],       // categorías de serie ocultadas
       months: {}            // "2026-07": { variable: [{id,name,amount,cat,who,date}], fixedPaid: {fixedId:true} }
     };
   }
@@ -390,7 +415,14 @@
     'Otros':        { emoji: '📦', color: '#90a4ae' },  // gris cartón
     'Fijos':        { emoji: '📌', color: '#e53935' }   // rojo
   };
-  const catInfo = c => CATS[c] || { emoji: '🏷️', color: '#90a4ae' };
+  const catInfo = c => (state.customCats || {})[c] || CATS[c] || { emoji: '🏷️', color: '#90a4ae' };
+  // Categorías visibles: las de serie (menos ocultas y "Fijos") + las personalizadas
+  function allCats() {
+    const hidden = state.hiddenCats || [];
+    const list = Object.keys(CATS).filter(c => c !== 'Fijos' && !hidden.includes(c));
+    Object.keys(state.customCats || {}).forEach(c => { if (!list.includes(c)) list.push(c); });
+    return list;
+  }
 
   // ---------- Persistencia: archivo (app .exe) o localStorage (navegador) ----------
   const isApp = () => !!(window.pywebview && window.pywebview.api);
@@ -619,7 +651,8 @@
   // ---------- Render ----------
   function render() {
     if (activeTab === 'mes') renderMes();
-    else renderResumen();
+    else if (activeTab === 'resumen') renderResumen();
+    else renderAjustes();
   }
 
   function renderMes() {
@@ -664,18 +697,6 @@
     $('name2').value = state.name2; $('salary2').value = t.s2 || '';
     $('totalIncome').textContent = `Ingresos de ${monthLabel(current)}: ` + fmt(t.income);
 
-    if (t.income > 0 || t.spent > 0) {
-      const col = v => v >= 0 ? 'var(--green)' : 'var(--red)';
-      $('splitBox').innerHTML = `
-        <div style="font-weight:600; margin-bottom:6px;">⚖️ Reparto a medias (50/50)</div>
-        <div class="split-row"><span>Gasto de ${n1} (mitad + ${fmt(t.pers1)} suyo)</span><strong>${fmt(t.gasto1)}</strong></div>
-        <div class="split-row"><span>Ahorro de ${n1} este mes</span><strong style="color:${col(t.ahorro1)};">${fmt(t.ahorro1)}</strong></div>
-        <div class="split-row" style="margin-top:6px;"><span>Gasto de ${n2} (mitad + ${fmt(t.pers2)} suyo)</span><strong>${fmt(t.gasto2)}</strong></div>
-        <div class="split-row"><span>Ahorro de ${n2} este mes</span><strong style="color:${col(t.ahorro2)};">${fmt(t.ahorro2)}</strong></div>`;
-    } else {
-      $('splitBox').innerHTML = '<span class="muted">Introduce sueldos y gastos para ver el reparto.</span>';
-    }
-
     const whoSel = $('varWho');
     const prevWho = whoSel.value;
     whoSel.innerHTML = `<option value="ambos">Ambos (a medias)</option><option value="p1">Solo ${n1}</option><option value="p2">Solo ${n2}</option>`;
@@ -698,8 +719,17 @@
 
     const whoLabel = w => w === 'p1' ? n1 : w === 'p2' ? n2 : 'Ambos';
     const fmtDay = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '';
-    const catOpts = sel => Object.keys(CATS).filter(c => c !== 'Fijos')
-      .map(c => `<option value="${c}" ${c === sel ? 'selected' : ''}>${CATS[c].emoji} ${c}</option>`).join('');
+    const catOpts = sel => {
+      const cs = allCats();
+      if (sel && !cs.includes(sel)) cs.unshift(sel);   // no perder la categoría del gasto aunque esté oculta
+      return cs.map(c => `<option value="${esc(c)}" ${c === sel ? 'selected' : ''}>${catInfo(c).emoji} ${esc(c)}</option>`).join('');
+    };
+
+    // Desplegable de categorías del formulario
+    const catSel = $('varCat');
+    const prevCat = catSel.value;
+    catSel.innerHTML = allCats().map(c => `<option value="${esc(c)}">${catInfo(c).emoji} ${esc(c)}</option>`).join('');
+    if ([...catSel.options].some(o => o.value === prevCat)) catSel.value = prevCat;
     const whoOpts = sel => [['ambos', 'Ambos (a medias)'], ['p1', 'Solo ' + n1], ['p2', 'Solo ' + n2]]
       .map(([val, lbl]) => `<option value="${val}" ${val === sel ? 'selected' : ''}>${lbl}</option>`).join('');
 
@@ -788,10 +818,18 @@
     if (present.length === 0) {
       $('savingsChart').innerHTML = `<div class="empty">Sin datos en ${resumenYear}.</div>`;
     } else {
+      // % de mejora o empeora del ahorro respecto al mes anterior con datos
+      const pcts = [];
+      let prev = null;
+      vals.forEach((v, i) => {
+        if (v != null && prev != null && prev !== 0) pcts[i] = (v - prev) / Math.abs(prev) * 100;
+        if (v != null) prev = v;
+      });
+
       const maxV = Math.max(0, ...present), minV = Math.min(0, ...present);
-      const top = 10, plotH = 100, scale = plotH / ((maxV - minV) || 1);
+      const top = 26, plotH = 100, scale = plotH / ((maxV - minV) || 1);
       const y0 = top + maxV * scale;
-      let svg = `<svg viewBox="0 0 620 150" style="width:100%; height:auto;" xmlns="http://www.w3.org/2000/svg">`;
+      let svg = `<svg viewBox="0 0 620 166" style="width:100%; height:auto;" xmlns="http://www.w3.org/2000/svg">`;
       svg += `<line x1="8" y1="${y0}" x2="612" y2="${y0}" stroke="var(--border)" stroke-width="1"/>`;
       vals.forEach((v, i) => {
         const x = 10 + i * 50;
@@ -799,9 +837,13 @@
           let h = Math.abs(v) * scale;
           if (h < 2) h = 2;
           const y = v >= 0 ? y0 - h : y0;
-          svg += `<rect x="${x}" y="${y}" width="36" height="${h}" rx="4" fill="${v >= 0 ? 'var(--green)' : 'var(--red)'}"><title>${monthLabel(resumenYear + '-' + String(i + 1).padStart(2, '0'))}: ${fmt(v)}</title></rect>`;
+          svg += `<rect x="${x}" y="${y}" width="36" height="${h}" rx="4" fill="${v >= 0 ? 'var(--green)' : 'var(--red)'}"><title>${monthLabel(resumenYear + '-' + String(i + 1).padStart(2, '0'))}: ${fmt(v)}${pcts[i] != null ? ' (' + (pcts[i] >= 0 ? '+' : '') + Math.round(pcts[i]) + '% vs mes anterior)' : ''}</title></rect>`;
         }
-        svg += `<text x="${x + 18}" y="143" text-anchor="middle" font-size="11" fill="var(--muted)">${letras[i]}</text>`;
+        if (pcts[i] != null) {
+          const p = pcts[i];
+          svg += `<text x="${x + 18}" y="16" text-anchor="middle" font-size="10" font-weight="600" fill="${p >= 0 ? 'var(--green)' : 'var(--red)'}">${p >= 0 ? '+' : ''}${Math.round(p)}%</text>`;
+        }
+        svg += `<text x="${x + 18}" y="159" text-anchor="middle" font-size="11" fill="var(--muted)">${letras[i]}</text>`;
       });
       svg += '</svg>';
       $('savingsChart').innerHTML = svg;
@@ -821,6 +863,84 @@
         </table>`;
   }
 
+  function renderAjustes() {
+    const hidden = state.hiddenCats || [];
+    const customs = state.customCats || {};
+    let html = '';
+    allCats().forEach(c => {
+      const ci = catInfo(c);
+      html += `<li>
+        <span class="expense-name">${ci.emoji} ${esc(c)}${c in customs ? ' <span class="cat">personalizada</span>' : ''}</span>
+        <span style="width:16px; height:16px; border-radius:5px; background:${ci.color}; display:inline-block;"></span>
+        <button class="del-btn" data-delcat="${esc(c)}" title="Quitar categoría">✕</button>
+      </li>`;
+    });
+    hidden.forEach(c => {
+      html += `<li style="opacity:.55;">
+        <span class="expense-name">${CATS[c] ? CATS[c].emoji + ' ' : ''}${esc(c)} <span class="cat">oculta</span></span>
+        <button class="del-btn" data-restorecat="${esc(c)}" title="Recuperar">↩</button>
+      </li>`;
+    });
+    $('catList').innerHTML = html || '<div class="empty">Sin categorías.</div>';
+  }
+
+  $('addCat').addEventListener('click', () => {
+    const name = $('newCatName').value.trim();
+    if (!name) return;
+    const emoji = $('newCatEmoji').value.trim() || '🏷️';
+    const color = $('newCatColor').value || '#e91e63';
+    if (!state.hiddenCats) state.hiddenCats = [];
+    if (!state.customCats) state.customCats = {};
+    if (CATS[name] && state.hiddenCats.includes(name)) {
+      // era una de serie oculta: recuperarla
+      state.hiddenCats = state.hiddenCats.filter(c => c !== name);
+    } else if (allCats().includes(name)) {
+      alert('Ya existe una categoría con ese nombre.');
+      return;
+    } else {
+      state.customCats[name] = { emoji, color };
+    }
+    $('newCatName').value = ''; $('newCatEmoji').value = '';
+    save(); renderAjustes();
+  });
+
+  $('exportData').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'gastos-casa-copia-' + todayIso() + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  $('importBtn').addEventListener('click', () => $('importFile').click());
+  $('importFile').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const parsed = JSON.parse(String(r.result).replace(new RegExp('^\\uFEFF'), ''));
+        if (typeof parsed !== 'object' || !parsed) throw new Error('formato');
+        if (confirm('¿Sustituir TODOS los datos actuales por los de esta copia? Si estáis sincronizados, también se actualizarán la nube y el resto de dispositivos.')) {
+          state = Object.assign(defaultState(), parsed);
+          save(); render();
+        }
+      } catch (err) { alert('Ese archivo no parece una copia válida de la app.'); }
+      e.target.value = '';
+    };
+    r.readAsText(f);
+  });
+
+  $('resetAll').addEventListener('click', () => {
+    if (!confirm('¿Borrar TODOS los datos de la app? Esta acción no se puede deshacer.')) return;
+    if (!confirm('Última confirmación: si estáis sincronizados, se borrará también en la nube y en los demás dispositivos. ¿Seguro que quieres empezar de cero?')) return;
+    const hogar = state.hogar;
+    state = defaultState();
+    if (hogar) state.hogar = hogar;
+    save(); render();
+  });
+
   function esc(s) {
     return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -830,13 +950,16 @@
     activeTab = tab;
     $('tabMes').classList.toggle('hidden', tab !== 'mes');
     $('tabResumen').classList.toggle('hidden', tab !== 'resumen');
+    $('tabAjustes').classList.toggle('hidden', tab !== 'ajustes');
     $('tabBtnMes').classList.toggle('active', tab === 'mes');
     $('tabBtnResumen').classList.toggle('active', tab === 'resumen');
+    $('tabBtnAjustes').classList.toggle('active', tab === 'ajustes');
     $('monthNav').style.visibility = tab === 'mes' ? 'visible' : 'hidden';
     render();
   }
   $('tabBtnMes').addEventListener('click', () => setTab('mes'));
   $('tabBtnResumen').addEventListener('click', () => setTab('resumen'));
+  $('tabBtnAjustes').addEventListener('click', () => setTab('ajustes'));
 
   // ---------- Eventos ----------
   ['name1', 'name2'].forEach(id => $(id).addEventListener('input', e => {
@@ -909,6 +1032,21 @@
     } else if (t.dataset.paid) {
       const m = monthData(current);
       m.fixedPaid[t.dataset.paid] = !m.fixedPaid[t.dataset.paid];
+      save(); render();
+    } else if (t.dataset.delcat) {
+      const c = t.dataset.delcat;
+      if (!state.hiddenCats) state.hiddenCats = [];
+      if (!state.customCats) state.customCats = {};
+      if (c in state.customCats) {
+        if (!confirm(`¿Eliminar la categoría "${c}"? Los gastos ya apuntados con ella se conservan (con icono genérico).`)) return;
+        delete state.customCats[c];
+        if (state.budgets) delete state.budgets[c];
+      } else {
+        state.hiddenCats.push(c);
+      }
+      save(); render();
+    } else if (t.dataset.restorecat) {
+      state.hiddenCats = (state.hiddenCats || []).filter(c => c !== t.dataset.restorecat);
       save(); render();
     } else if (t.dataset.delmonth) {
       const key = t.dataset.delmonth;
