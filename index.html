@@ -27,6 +27,19 @@
     --border: #dce8de;
     --radius: 14px;
   }
+  body.dark {
+    --bg: #101613;
+    --card: #18211b;
+    --card2: #202d24;
+    --text: #e4ece6;
+    --muted: #93a49a;
+    --accent: #3fae74;
+    --green: #3ecf82;
+    --red: #ef6a6a;
+    --orange: #e0a04a;
+    --border: #2a3830;
+  }
+  body.dark h1 { color: #d9ecdc; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: 'Segoe UI', system-ui, sans-serif;
@@ -318,6 +331,16 @@
           <div style="flex:none; width:64px;"><input type="color" id="newCatColor" value="#e91e63" style="height:40px; padding:3px;" title="Color de la categoría"></div>
         </div>
         <button class="primary" id="addCat" style="margin-top:10px;">Añadir categoría</button>
+      </div>
+
+      <div class="card">
+        <h2>🌗 Apariencia</h2>
+        <p class="muted" style="margin-bottom:10px;">Se guarda en este dispositivo: cada uno puede tener el modo que prefiera.</p>
+        <div class="tabs" style="margin-bottom:0;">
+          <button id="theme-light">☀️ Claro</button>
+          <button id="theme-dark">🌙 Oscuro</button>
+          <button id="theme-auto">🌗 Automático</button>
+        </div>
       </div>
 
       <div class="card">
@@ -960,6 +983,21 @@
   $('tabBtnMes').addEventListener('click', () => setTab('mes'));
   $('tabBtnResumen').addEventListener('click', () => setTab('resumen'));
   $('tabBtnAjustes').addEventListener('click', () => setTab('ajustes'));
+
+  // ---------- Modo claro / oscuro (preferencia por dispositivo) ----------
+  const THEME_KEY = 'gastosCasa_theme';
+  function applyTheme() {
+    const pref = localStorage.getItem(THEME_KEY) || 'light';
+    const dark = pref === 'dark' || (pref === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.body.classList.toggle('dark', dark);
+    ['light', 'dark', 'auto'].forEach(t => $('theme-' + t).classList.toggle('active', pref === t));
+  }
+  ['light', 'dark', 'auto'].forEach(t => $('theme-' + t).addEventListener('click', () => {
+    localStorage.setItem(THEME_KEY, t);
+    applyTheme();
+  }));
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+  applyTheme();
 
   // ---------- Eventos ----------
   ['name1', 'name2'].forEach(id => $(id).addEventListener('input', e => {
