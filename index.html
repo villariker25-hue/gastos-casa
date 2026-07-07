@@ -126,6 +126,10 @@
     background: var(--bg); border: 1px solid transparent;
   }
   .amount-edit:hover, .amount-edit:focus { border-color: var(--accent); }
+  .budget-edit {
+    width: 80px; text-align: right; font-size: .75rem; padding: 3px 6px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  }
   .del-btn {
     background: none; border: none; color: var(--muted); cursor: pointer;
     font-size: 1rem; padding: 4px 6px; border-radius: 6px;
@@ -273,6 +277,10 @@
             <label>Importe (€)</label>
             <input type="number" id="varAmount" placeholder="65.30" min="0" step="0.01">
           </div>
+          <div style="min-width:140px;">
+            <label>Fecha</label>
+            <input type="date" id="varDate">
+          </div>
           <div style="min-width:130px;">
             <label>Categoría</label>
             <select id="varCat">
@@ -325,6 +333,11 @@
 
     <div class="summary" id="overallStats"></div>
 
+    <div class="card" style="margin-bottom:16px;">
+      <h2>📉 Evolución del ahorro</h2>
+      <div id="savingsChart"></div>
+    </div>
+
     <div class="card">
       <h2>📅 Detalle mes a mes</h2>
       <p class="muted" style="margin-bottom:10px;">"Sin alquiler" excluye los gastos fijos cuyo nombre contiene "alquiler".</p>
@@ -348,7 +361,8 @@
         { id: 'cap1', name: 'Caprichos Iker', amount: 250 },
         { id: 'cap2', name: 'Caprichos Laura', amount: 250 }
       ],                    // [{id, name, amount}]
-      months: {}            // "2026-07": { variable: [{id,name,amount,cat,who}], fixedPaid: {fixedId:true} }
+      budgets: {},          // { "Supermercado": 400, ... } límite mensual por categoría
+      months: {}            // "2026-07": { variable: [{id,name,amount,cat,who,date}], fixedPaid: {fixedId:true} }
     };
   }
 
@@ -356,6 +370,12 @@
   let current = monthKey(new Date());
   let activeTab = 'mes';
   let resumenYear = new Date().getFullYear();
+  let editingVarId = null;   // gasto variable en edición
+
+  function todayIso() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
 
   // Colores vivos e intuitivos por categoría
   const CATS = {
@@ -651,8 +671,7 @@
         <div class="split-row"><span>Gasto de ${n1} (mitad + ${fmt(t.pers1)} suyo)</span><strong>${fmt(t.gasto1)}</strong></div>
         <div class="split-row"><span>Ahorro de ${n1} este mes</span><strong style="color:${col(t.ahorro1)};">${fmt(t.ahorro1)}</strong></div>
         <div class="split-row" style="margin-top:6px;"><span>Gasto de ${n2} (mitad + ${fmt(t.pers2)} suyo)</span><strong>${fmt(t.gasto2)}</strong></div>
-        <div class="split-row"><span>Ahorro de ${n2} este mes</span><strong style="color:${col(t.ahorro2)};">${fmt(t.ahorro2)}</strong></div>
-        <div class="split-row muted" style="margin-top:6px;"><span>Lo compartido (${fmt(t.shared)}) se divide a medias; lo marcado como de uno, lo paga solo esa persona.</span></div>`;
+        <div class="split-row"><span>Ahorro de ${n2} este mes</span><strong style="color:${col(t.ahorro2)};">${fmt(t.ahorro2)}</strong></div>`;
     } else {
       $('splitBox').innerHTML = '<span class="muted">Introduce sueldos y gastos para ver el reparto.</span>';
     }
@@ -674,29 +693,66 @@
           </li>`;
         }).join('');
 
+    // Fecha por defecto del formulario: hoy (o día 1 si miras otro mes)
+    $('varDate').value = current === monthKey(new Date()) ? todayIso() : current + '-01';
+
     const whoLabel = w => w === 'p1' ? n1 : w === 'p2' ? n2 : 'Ambos';
+    const fmtDay = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '';
+    const catOpts = sel => Object.keys(CATS).filter(c => c !== 'Fijos')
+      .map(c => `<option value="${c}" ${c === sel ? 'selected' : ''}>${CATS[c].emoji} ${c}</option>`).join('');
+    const whoOpts = sel => [['ambos', 'Ambos (a medias)'], ['p1', 'Solo ' + n1], ['p2', 'Solo ' + n2]]
+      .map(([val, lbl]) => `<option value="${val}" ${val === sel ? 'selected' : ''}>${lbl}</option>`).join('');
+
+    const sorted = m.variable.slice().sort((a, b) => ((b.date || '0') + b.id).localeCompare((a.date || '0') + a.id));
     $('varList').innerHTML = m.variable.length === 0
       ? '<div class="empty">No hay gastos variables este mes. ¡Añade el primero!</div>'
-      : m.variable.slice().reverse().map(v => `<li>
-          <span class="expense-name">${esc(v.name)}<span class="cat" style="color:${catInfo(v.cat).color};">${catInfo(v.cat).emoji} ${esc(v.cat)}</span></span>
+      : sorted.map(v => v.id === editingVarId
+        ? `<li style="flex-wrap:wrap;">
+            <input type="text" id="ev-name" value="${esc(v.name)}" style="flex:2; min-width:110px;">
+            <input type="number" id="ev-amount" value="${v.amount}" min="0" step="0.01" style="width:90px;">
+            <input type="date" id="ev-date" value="${v.date || ''}" style="width:150px;">
+            <select id="ev-cat" style="width:auto;">${catOpts(v.cat)}</select>
+            <select id="ev-who" style="width:auto;">${whoOpts(v.who)}</select>
+            <button class="paid-toggle paid" data-savevar="${v.id}">✓ Guardar</button>
+            <button class="del-btn" data-cancelvar="${v.id}" title="Cancelar">✕</button>
+          </li>`
+        : `<li>
+          <span class="expense-name">${esc(v.name)}<span class="cat" style="color:${catInfo(v.cat).color};">${catInfo(v.cat).emoji} ${esc(v.cat)}${v.date ? ' · ' + fmtDay(v.date) : ''}</span></span>
           <span class="expense-who">${whoLabel(v.who)}</span>
           <span class="expense-amount">${fmt(v.amount)}</span>
+          <button class="del-btn" data-editvar="${v.id}" title="Editar">✎</button>
           <button class="del-btn" data-delvar="${v.id}" title="Eliminar">✕</button>
         </li>`).join('');
 
+    const budgets = state.budgets || {};
     const cats = {};
     state.fixed.forEach(f => cats['Fijos'] = (cats['Fijos'] || 0) + f.amount);
     m.variable.forEach(v => cats[v.cat] = (cats[v.cat] || 0) + v.amount);
+    // Mostrar también categorías con límite fijado aunque este mes no tengan gasto
+    Object.keys(budgets).forEach(c => { if (!(c in cats) && budgets[c] > 0) cats[c] = 0; });
     const maxCat = Math.max(1, ...Object.values(cats));
     const entries = Object.entries(cats).sort((a, b) => b[1] - a[1]);
     $('catBars').innerHTML = entries.length === 0
       ? '<div class="empty">Sin datos todavía.</div>'
       : entries.map(([c, val]) => {
           const ci = catInfo(c);
+          const b = c === 'Fijos' ? 0 : (budgets[c] || 0);
+          let pct, fill = ci.color, label;
+          if (b > 0) {
+            pct = Math.min(100, val / b * 100);
+            if (val > b) fill = 'var(--red)';
+            else if (val >= b * 0.8) fill = 'var(--orange)';
+            label = `<b style="color:${val > b ? 'var(--red)' : ci.color};">${fmt(val)}</b><span class="muted" style="font-size:.75rem;"> / ${fmt(b)}</span>`;
+          } else {
+            pct = val / maxCat * 100;
+            label = `<b style="color:${ci.color};">${fmt(val)}</b>`;
+          }
+          const budgetInput = c === 'Fijos' ? ''
+            : `<input type="number" class="budget-edit" data-budget="${esc(c)}" value="${b || ''}" placeholder="límite €" min="0" title="Límite mensual para ${esc(c)} (vacío = sin límite)">`;
           return `
         <div class="cat-bar-row">
-          <div class="cat-bar-top"><span>${ci.emoji} ${esc(c)}</span><b style="color:${ci.color};">${fmt(val)}</b></div>
-          <div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${val / maxCat * 100}%; background:${ci.color};"></div></div>
+          <div class="cat-bar-top"><span>${ci.emoji} ${esc(c)}</span><span style="display:flex; align-items:center; gap:8px;">${label}${budgetInput}</span></div>
+          <div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${pct}%; background:${fill};"></div></div>
         </div>`;
         }).join('');
   }
@@ -721,6 +777,35 @@
       <div class="stat"><div class="label">Ahorro ${resumenYear}</div><div class="value ${yearClass}">${fmt(o.yearSavings)}</div><div class="sub">${o.months} ${o.months === 1 ? 'mes' : 'meses'}</div></div>
       <div class="stat"><div class="label">Ahorro total acumulado</div><div class="value ${totClass}">${fmt(o.allTimeSavings)}</div><div class="sub">${splitSub}</div></div>
     `;
+
+    // Gráfico de barras: ahorro de cada mes del año
+    const savMap = {};
+    o.rows.forEach(r => savMap[r.key] = r.savings);
+    const letras = ['E', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+    const vals = [];
+    for (let mo = 1; mo <= 12; mo++) vals.push(savMap[resumenYear + '-' + String(mo).padStart(2, '0')]);
+    const present = vals.filter(v => v != null);
+    if (present.length === 0) {
+      $('savingsChart').innerHTML = `<div class="empty">Sin datos en ${resumenYear}.</div>`;
+    } else {
+      const maxV = Math.max(0, ...present), minV = Math.min(0, ...present);
+      const top = 10, plotH = 100, scale = plotH / ((maxV - minV) || 1);
+      const y0 = top + maxV * scale;
+      let svg = `<svg viewBox="0 0 620 150" style="width:100%; height:auto;" xmlns="http://www.w3.org/2000/svg">`;
+      svg += `<line x1="8" y1="${y0}" x2="612" y2="${y0}" stroke="var(--border)" stroke-width="1"/>`;
+      vals.forEach((v, i) => {
+        const x = 10 + i * 50;
+        if (v != null) {
+          let h = Math.abs(v) * scale;
+          if (h < 2) h = 2;
+          const y = v >= 0 ? y0 - h : y0;
+          svg += `<rect x="${x}" y="${y}" width="36" height="${h}" rx="4" fill="${v >= 0 ? 'var(--green)' : 'var(--red)'}"><title>${monthLabel(resumenYear + '-' + String(i + 1).padStart(2, '0'))}: ${fmt(v)}</title></rect>`;
+        }
+        svg += `<text x="${x + 18}" y="143" text-anchor="middle" font-size="11" fill="var(--muted)">${letras[i]}</text>`;
+      });
+      svg += '</svg>';
+      $('savingsChart').innerHTML = svg;
+    }
 
     $('monthlyTable').innerHTML = o.rows.length === 0
       ? `<div class="empty">Sin datos en ${resumenYear}.</div>`
@@ -781,7 +866,8 @@
     if (!name || !(amount > 0)) return;
     monthData(current).variable.push({
       id: uid(), name, amount,
-      cat: $('varCat').value, who: $('varWho').value
+      cat: $('varCat').value, who: $('varWho').value,
+      date: $('varDate').value || todayIso()
     });
     $('varName').value = ''; $('varAmount').value = '';
     save(); render();
@@ -801,6 +887,25 @@
       const m = monthData(current);
       m.variable = m.variable.filter(v => v.id !== t.dataset.delvar);
       save(); render();
+    } else if (t.dataset.editvar) {
+      editingVarId = t.dataset.editvar;
+      render();
+    } else if (t.dataset.savevar) {
+      const v = monthData(current).variable.find(x => x.id === t.dataset.savevar);
+      if (v) {
+        const name = $('ev-name').value.trim();
+        const amount = parseFloat($('ev-amount').value);
+        if (name) v.name = name;
+        if (amount > 0) v.amount = amount;
+        if ($('ev-date').value) v.date = $('ev-date').value;
+        v.cat = $('ev-cat').value;
+        v.who = $('ev-who').value;
+      }
+      editingVarId = null;
+      save(); render();
+    } else if (t.dataset.cancelvar) {
+      editingVarId = null;
+      render();
     } else if (t.dataset.paid) {
       const m = monthData(current);
       m.fixedPaid[t.dataset.paid] = !m.fixedPaid[t.dataset.paid];
@@ -819,8 +924,17 @@
     }
   });
 
-  // Edición en línea del importe de un gasto fijo
+  // Edición en línea del importe de un gasto fijo y de los límites por categoría
   document.addEventListener('change', e => {
+    const bcat = e.target.dataset && e.target.dataset.budget;
+    if (bcat) {
+      const v = parseFloat(e.target.value);
+      if (!state.budgets) state.budgets = {};
+      if (v > 0) state.budgets[bcat] = v;
+      else delete state.budgets[bcat];
+      save(); render();
+      return;
+    }
     const id = e.target.dataset && e.target.dataset.editfixed;
     if (!id) return;
     const f = state.fixed.find(f => f.id === id);
