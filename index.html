@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gastos de Casa</title>
+<meta name="theme-color" content="#2f9e63">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gastos">
+<script>/*APPMODE*/</script>
+<script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<style>
+  :root {
+    --bg: #f2f7f3;
+    --card: #ffffff;
+    --card2: #e9f4ec;
+    --text: #1f2d24;
+    --muted: #68796d;
+    --accent: #2f9e63;
+    --green: #27a763;
+    --red: #e05d5d;
+    --orange: #d98a2b;
+    --border: #dce8de;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px 60px;
+  }
+  .container { max-width: 1000px; margin: 0 auto; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 16px;
+  }
+  h1 { font-size: 1.6rem; display: flex; align-items: center; gap: 10px; color: #1b3b28; }
+  h1 span.emoji { font-size: 1.8rem; }
+
+  .month-nav { display: flex; align-items: center; gap: 8px; }
+  .month-nav button {
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    width: 36px; height: 36px; border-radius: 10px; font-size: 1rem; cursor: pointer;
+    transition: background .15s;
+  }
+  .month-nav button:hover { background: var(--card2); }
+  .month-label {
+    font-size: 1.05rem; font-weight: 600; min-width: 160px; text-align: center;
+    text-transform: capitalize;
+  }
+
+  /* Pestañas */
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tabs button {
+    background: var(--card); border: 1px solid var(--border); color: var(--muted);
+    border-radius: 24px; padding: 9px 22px; font-size: .95rem; font-weight: 600;
+    cursor: pointer; transition: all .15s;
+  }
+  .tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tabs button:not(.active):hover { background: var(--card2); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px;
+    box-shadow: 0 1px 4px rgba(31,45,36,.05);
+  }
+  .card h2 {
+    font-size: 0.95rem; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .06em; margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+  }
+
+  /* Resumen */
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; text-align: center; box-shadow: 0 1px 4px rgba(31,45,36,.05);
+  }
+  .stat .label { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .stat .value { font-size: 1.5rem; font-weight: 700; margin-top: 6px; }
+  .stat .value.green { color: var(--green); }
+  .stat .value.red { color: var(--red); }
+  .stat .value.orange { color: var(--orange); }
+  .stat .value.accent { color: var(--accent); }
+  .stat .sub { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+
+  /* Formularios */
+  label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 4px; }
+  input, select {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: 10px; padding: 9px 12px; font-size: .95rem;
+    outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 10px; margin-bottom: 12px; }
+  .row > div { flex: 1; }
+
+  button.primary {
+    background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    padding: 10px 16px; font-size: .95rem; font-weight: 600; cursor: pointer;
+    width: 100%; transition: filter .15s;
+  }
+  button.primary:hover { filter: brightness(1.1); }
+
+  /* Listas de gastos */
+  .expense-list { list-style: none; margin-top: 8px; }
+  .expense-list li {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 4px; border-bottom: 1px solid var(--border); gap: 8px;
+  }
+  .expense-list li:last-child { border-bottom: none; }
+  .expense-name { flex: 1; }
+  .expense-name .cat { font-size: .72rem; color: var(--muted); display: block; }
+  .expense-amount { font-weight: 600; white-space: nowrap; }
+  .expense-who { font-size: .72rem; color: var(--muted); white-space: nowrap; }
+  .amount-edit {
+    width: 90px; text-align: right; font-weight: 600; padding: 5px 8px;
+    background: var(--bg); border: 1px solid transparent;
+  }
+  .amount-edit:hover, .amount-edit:focus { border-color: var(--accent); }
+  .del-btn {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 1rem; padding: 4px 6px; border-radius: 6px;
+  }
+  .del-btn:hover { color: var(--red); background: rgba(224,93,93,.1); }
+  .paid-toggle {
+    cursor: pointer; font-size: .75rem; padding: 3px 10px; border-radius: 20px;
+    border: 1px solid var(--border); background: none; color: var(--muted); white-space: nowrap;
+  }
+  .paid-toggle.paid { background: rgba(39,167,99,.12); color: var(--green); border-color: rgba(39,167,99,.4); }
+
+  /* Barra de ahorro */
+  .bar-wrap { background: var(--card2); border-radius: 20px; height: 22px; overflow: hidden; margin-top: 10px; display: flex; }
+  .bar-gasto { background: var(--red); height: 100%; transition: width .4s; }
+  .bar-ahorro { background: var(--green); height: 100%; transition: width .4s; }
+  .bar-legend { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-top: 6px; }
+  .bar-chips { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: .75rem; color: var(--muted); }
+  .bar-chips .chip { display: inline-flex; align-items: center; gap: 5px; }
+  .bar-chips .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  /* Categorías */
+  .cat-bars { margin-top: 6px; }
+  .cat-bar-row { margin-bottom: 10px; }
+  .cat-bar-top { display: flex; justify-content: space-between; font-size: .82rem; margin-bottom: 4px; }
+  .cat-bar-bg { background: var(--card2); border-radius: 8px; height: 10px; overflow: hidden; }
+  .cat-bar-fill { height: 100%; border-radius: 8px; background: var(--accent); transition: width .4s; }
+
+  /* Reparto */
+  .split-box { background: var(--card2); border-radius: 10px; padding: 12px; margin-top: 10px; font-size: .88rem; }
+  .split-box .split-row { display: flex; justify-content: space-between; padding: 4px 0; }
+  .split-box .split-row strong { color: var(--accent); }
+
+  /* Tabla resumen mensual */
+  table.monthly { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  table.monthly th {
+    text-align: right; color: var(--muted); font-size: .72rem; text-transform: uppercase;
+    letter-spacing: .05em; padding: 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  table.monthly th:first-child { text-align: left; }
+  table.monthly td { padding: 8px; border-bottom: 1px solid var(--border); text-align: right; }
+  table.monthly td:first-child { text-align: left; text-transform: capitalize; }
+  table.monthly tr:last-child td { border-bottom: none; }
+
+  .muted { color: var(--muted); font-size: .85rem; }
+  .empty { color: var(--muted); font-size: .85rem; text-align: center; padding: 16px 0; }
+
+  .full-width { grid-column: 1 / -1; }
+  .hidden { display: none !important; }
+
+  footer { text-align: center; margin-top: 30px; color: var(--muted); font-size: .78rem; }
+  @media (max-width: 640px) {
+    header { justify-content: center; }
+    .stat .value { font-size: 1.2rem; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1><span class="emoji">🏠</span> Gastos de Casa</h1>
+    <div class="month-nav" id="monthNav">
+      <button id="prevMonth" title="Mes anterior">‹</button>
+      <div class="month-label" id="monthLabel"></div>
+      <button id="nextMonth" title="Mes siguiente">›</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button id="tabBtnMes" class="active">📅 Este mes</button>
+    <button id="tabBtnResumen">📈 Resumen</button>
+  </div>
+
+  <!-- ============ PESTAÑA: ESTE MES ============ -->
+  <div id="tabMes">
+
+    <div class="summary" id="summary"></div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h2>💰 Ingresos vs gastos del mes</h2>
+      <div class="bar-wrap" id="barWrap"></div>
+      <div class="bar-legend">
+        <span>Gastado: <b id="legendGasto" style="color:var(--red);"></b></span>
+        <span>🟢 Ahorro: <b id="legendAhorro"></b></span>
+      </div>
+      <div class="bar-chips" id="barChips"></div>
+    </div>
+
+    <div class="grid">
+
+      <!-- SUELDOS -->
+      <div class="card">
+        <h2>👫 Sueldos</h2>
+        <p class="muted" style="margin-bottom:10px;">El sueldo se guarda por mes: si un mes cobráis distinto, cámbialo en ese mes con las flechas ‹ ›. Los meses nuevos heredan el último sueldo.</p>
+        <div class="row">
+          <div>
+            <label>Nombre 1</label>
+            <input type="text" id="name1" placeholder="Iker">
+          </div>
+          <div>
+            <label>Sueldo neto/mes (€)</label>
+            <input type="number" id="salary1" placeholder="1500" min="0" step="0.01">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Nombre 2</label>
+            <input type="text" id="name2" placeholder="Laura">
+          </div>
+          <div>
+            <label>Sueldo neto/mes (€)</label>
+            <input type="number" id="salary2" placeholder="1400" min="0" step="0.01">
+          </div>
+        </div>
+        <p class="muted" id="totalIncome"></p>
+
+        <div class="split-box" id="splitBox"></div>
+      </div>
+
+      <!-- GASTOS FIJOS -->
+      <div class="card">
+        <h2>📌 Gastos fijos mensuales</h2>
+        <p class="muted" style="margin-bottom:10px;">Alquiler, luz, agua, internet, caprichos… Se aplican todos los meses. Puedes editar el importe directamente en la lista.</p>
+        <div class="row">
+          <div style="flex:2;">
+            <input type="text" id="fixedName" placeholder="Alquiler">
+          </div>
+          <div>
+            <input type="number" id="fixedAmount" placeholder="800 €" min="0" step="0.01">
+          </div>
+        </div>
+        <button class="primary" id="addFixed">Añadir gasto fijo</button>
+        <ul class="expense-list" id="fixedList"></ul>
+      </div>
+
+      <!-- GASTOS VARIABLES -->
+      <div class="card full-width">
+        <h2>🛒 Gastos variables de este mes</h2>
+        <div class="row" style="flex-wrap:wrap;">
+          <div style="flex:2; min-width:140px;">
+            <label>Concepto</label>
+            <input type="text" id="varName" placeholder="Compra supermercado">
+          </div>
+          <div style="min-width:100px;">
+            <label>Importe (€)</label>
+            <input type="number" id="varAmount" placeholder="65.30" min="0" step="0.01">
+          </div>
+          <div style="min-width:130px;">
+            <label>Categoría</label>
+            <select id="varCat">
+              <option value="Supermercado">🛒 Supermercado</option>
+              <option value="Restaurantes">🍽️ Restaurantes</option>
+              <option value="Transporte">🚌 Transporte</option>
+              <option value="Gasolina">⛽ Gasolina</option>
+              <option value="Ocio">🎉 Ocio</option>
+              <option value="Ropa">👕 Ropa</option>
+              <option value="Salud">💊 Salud</option>
+              <option value="Hogar">🛋️ Hogar</option>
+              <option value="Otros">📦 Otros</option>
+            </select>
+          </div>
+          <div style="min-width:110px;">
+            <label>¿De quién es?</label>
+            <select id="varWho"></select>
+          </div>
+          <div style="min-width:110px; display:flex; align-items:flex-end;">
+            <button class="primary" id="addVar">Añadir</button>
+          </div>
+        </div>
+        <ul class="expense-list" id="varList"></ul>
+      </div>
+
+      <!-- GASTO POR CATEGORÍA -->
+      <div class="card full-width">
+        <h2>📊 Gasto por categoría</h2>
+        <div class="cat-bars" id="catBars"></div>
+      </div>
+
+      <!-- SINCRONIZACIÓN -->
+      <div class="card full-width">
+        <h2>☁️ Sincronización entre dispositivos</h2>
+        <div id="syncBody"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ PESTAÑA: RESUMEN ============ -->
+  <div id="tabResumen" class="hidden">
+    <div style="display:flex; justify-content:center; margin-bottom:16px;">
+      <div class="month-nav">
+        <button id="prevYear" title="Año anterior">‹</button>
+        <div class="month-label" id="yearLabel" style="min-width:90px;"></div>
+        <button id="nextYear" title="Año siguiente">›</button>
+      </div>
+    </div>
+
+    <div class="summary" id="overallStats"></div>
+
+    <div class="card">
+      <h2>📅 Detalle mes a mes</h2>
+      <p class="muted" style="margin-bottom:10px;">"Sin alquiler" excluye los gastos fijos cuyo nombre contiene "alquiler".</p>
+      <div id="monthlyTable"></div>
+    </div>
+  </div>
+
+  <footer id="storageNote">Los datos se guardan automáticamente.</footer>
+</div>
+
+<script>
+(function () {
+  const STORAGE_KEY = 'gastosCasa_v1';
+
+  // ---------- Estado ----------
+  function defaultState() {
+    return {
+      name1: 'Iker', salary1: 0,
+      name2: 'Laura', salary2: 0,
+      fixed: [
+        { id: 'cap1', name: 'Caprichos Iker', amount: 250 },
+        { id: 'cap2', name: 'Caprichos Laura', amount: 250 }
+      ],                    // [{id, name, amount}]
+      months: {}            // "2026-07": { variable: [{id,name,amount,cat,who}], fixedPaid: {fixedId:true} }
+    };
+  }
+
+  let state = defaultState();
+  let current = monthKey(new Date());
+  let activeTab = 'mes';
+  let resumenYear = new Date().getFullYear();
+
+  // Colores vivos e intuitivos por categoría
+  const CATS = {
+    'Supermercado': { emoji: '🛒', color: '#ab47bc' },  // morado uva
+    'Restaurantes': { emoji: '🍽️', color: '#ff7043' },  // naranja comida caliente
+    'Transporte':   { emoji: '🚌', color: '#1e88e5' },  // azul bus/metro
+    'Gasolina':     { emoji: '⛽', color: '#fbc02d' },  // amarillo gasolinera
+    'Ocio':         { emoji: '🎉', color: '#ec407a' },  // rosa fiesta
+    'Ropa':         { emoji: '👕', color: '#5c6bc0' },  // azul vaquero
+    'Salud':        { emoji: '💊', color: '#00bfa5' },  // turquesa sanitario
+    'Hogar':        { emoji: '🛋️', color: '#8d6e63' },  // marrón madera
+    'Otros':        { emoji: '📦', color: '#90a4ae' },  // gris cartón
+    'Fijos':        { emoji: '📌', color: '#e53935' }   // rojo
+  };
+  const catInfo = c => CATS[c] || { emoji: '🏷️', color: '#90a4ae' };
+
+  // ---------- Persistencia: archivo (app .exe) o localStorage (navegador) ----------
+  const isApp = () => !!(window.pywebview && window.pywebview.api);
+
+  async function loadRaw() {
+    if (isApp()) {
+      try { return await window.pywebview.api.load(); } catch (e) { console.error(e); }
+    }
+    return localStorage.getItem(STORAGE_KEY);
+  }
+  function saveRaw(str) {
+    if (isApp()) window.pywebview.api.save(str);
+    else localStorage.setItem(STORAGE_KEY, str);
+  }
+  function saveLocalOnly() { saveRaw(JSON.stringify(state)); }
+  function save() {
+    state.updatedAt = Date.now();
+    saveLocalOnly();
+    pushSync();
+  }
+
+  // ---------- Sincronización entre dispositivos (Firebase) ----------
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyDdB36I8wdRiHkBwOi-HqMnCd_CRBd2NAI",
+    authDomain: "gastos-casa-2b557.firebaseapp.com",
+    databaseURL: "https://gastos-casa-2b557-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "gastos-casa-2b557",
+    storageBucket: "gastos-casa-2b557.firebasestorage.app",
+    messagingSenderId: "96735859265",
+    appId: "1:96735859265:web:5687967a0b030107e1acc0"
+  };
+
+  let hogarRef = null, applyingRemote = false;
+
+  function syncAvailable() { return typeof firebase !== 'undefined' && !!FIREBASE_CONFIG; }
+  const dbg = m => { try { if (isApp()) window.pywebview.api.log(m); } catch (e) {} };
+
+  function connectSync(code) {
+    if (!syncAvailable() || !code) return false;
+    try {
+      if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+      // Sesión anónima: las reglas de la base de datos la exigen
+      dbg('connectSync: iniciando sesion anonima...');
+      firebase.auth().signInAnonymously().then(() => {
+        dbg('connectSync: sesion OK, conectando al hogar');
+        if (hogarRef) hogarRef.off();
+        hogarRef = firebase.database().ref('hogares/' + code);
+        hogarRef.on('value', snap => {
+          const remote = snap.val();
+          if (!remote) { pushSync(); return; }      // hogar nuevo: subir lo local
+          if ((remote.updatedAt || 0) > (state.updatedAt || 0)) {
+            applyingRemote = true;
+            state = Object.assign(defaultState(), remote);
+            state.hogar = code;
+            applyingRemote = false;
+            saveLocalOnly();
+            render();
+          }
+        });
+        renderSync();
+      }).catch(e => {
+        console.error('Error de sincronización:', e);
+        dbg('connectSync ERROR: ' + (e && e.code) + ' ' + (e && e.message));
+        hogarRef = null;
+        renderSync();
+      });
+      return true;
+    } catch (e) { console.error('Error de sincronización:', e); return false; }
+  }
+
+  function disconnectSync() {
+    if (hogarRef) hogarRef.off();
+    hogarRef = null;
+    delete state.hogar;
+    saveLocalOnly();
+    renderSync();
+  }
+
+  function pushSync() {
+    if (hogarRef && !applyingRemote) hogarRef.set(state).catch(e => console.error('Error al subir datos:', e));
+  }
+
+  function renderSync() {
+    const el = $('syncBody');
+    if (!syncAvailable()) {
+      el.innerHTML = '<span class="muted">La sincronización con el móvil está pendiente de configurar. De momento, los datos son solo de este dispositivo.</span>';
+      return;
+    }
+    if (state.hogar && hogarRef) {
+      el.innerHTML = `<p class="muted">✅ Conectado al hogar <b>${esc(state.hogar)}</b>. Todo lo que apuntéis se comparte al instante entre los dispositivos conectados con el mismo código.</p>
+        <div class="row" style="margin-top:10px;"><div style="max-width:200px;"><button class="primary" id="syncOff" style="background:var(--red);">Desconectar</button></div></div>`;
+      $('syncOff').addEventListener('click', disconnectSync);
+    } else if (state.hogar && !hogarRef) {
+      el.innerHTML = `<p class="muted">⏳ Conectando al hogar <b>${esc(state.hogar)}</b>… Si no conecta, comprueba la conexión a internet.</p>
+        <div class="row" style="margin-top:10px;"><div style="max-width:200px;"><button class="primary" id="syncOff" style="background:var(--red);">Cancelar</button></div></div>`;
+      $('syncOff').addEventListener('click', disconnectSync);
+    } else {
+      el.innerHTML = `<p class="muted" style="margin-bottom:10px;">Escribid el <b>mismo código secreto</b> en todos los dispositivos (invéntatelo largo y difícil de adivinar, p. ej. <i>iker-laura-manzana-2026</i>).</p>
+        <div class="row">
+          <div style="flex:2;"><input type="text" id="hogarCode" placeholder="código de hogar"></div>
+          <div><button class="primary" id="syncOn">Conectar</button></div>
+        </div>`;
+      $('syncOn').addEventListener('click', () => {
+        const code = $('hogarCode').value.trim();
+        if (!code) return;
+        if (connectSync(code)) { state.hogar = code; save(); renderSync(); }
+      });
+    }
+  }
+
+  function monthKey(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+  // Crea el mes si no existe (solo al ESCRIBIR datos en él).
+  // Al crearse, el mes hereda los últimos sueldos como punto de partida.
+  function monthData(key) {
+    if (!state.months[key]) {
+      state.months[key] = {
+        variable: [], fixedPaid: {},
+        salary1: state.salary1 || 0, salary2: state.salary2 || 0
+      };
+    }
+    if (!state.months[key].variable) state.months[key].variable = [];
+    if (!state.months[key].fixedPaid) state.months[key].fixedPaid = {};
+    return state.months[key];
+  }
+  // Solo lectura: NO crea el mes (para navegar con las flechas sin dejar rastro)
+  function peekMonth(key) {
+    return state.months[key] || { variable: [], fixedPaid: {} };
+  }
+  // Sueldos de un mes: usa los del mes y, si no los tiene guardados, los últimos conocidos
+  function salOf(md) {
+    return [
+      (md.salary1 != null ? md.salary1 : state.salary1) || 0,
+      (md.salary2 != null ? md.salary2 : state.salary2) || 0
+    ];
+  }
+  // Fija los sueldos de todos los meses ya registrados para que ninguno
+  // dependa del valor "global" (que solo sirve para heredar en meses nuevos)
+  function pinSalaries() {
+    Object.values(state.months).forEach(md => {
+      if (md.salary1 == null) md.salary1 = state.salary1 || 0;
+      if (md.salary2 == null) md.salary2 = state.salary2 || 0;
+    });
+  }
+  // El valor a heredar por meses nuevos = el sueldo del mes registrado más reciente
+  function refreshDefaults() {
+    const keys = Object.keys(state.months).sort();
+    if (!keys.length) return;
+    const last = state.months[keys[keys.length - 1]];
+    if (last.salary1 != null) state.salary1 = last.salary1;
+    if (last.salary2 != null) state.salary2 = last.salary2;
+  }
+
+  const fmt = n => n.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' });
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const $ = id => document.getElementById(id);
+  const isRent = f => /alquiler/i.test(f.name);
+
+  // ---------- Cálculos ----------
+  function totals() {
+    const m = peekMonth(current);
+    const fixedTotal = state.fixed.reduce((s, f) => s + f.amount, 0);
+    const varTotal = m.variable.reduce((s, v) => s + v.amount, 0);
+    const [s1, s2] = salOf(m);
+    const income = s1 + s2;
+    const spent = fixedTotal + varTotal;
+    // Reparto 50/50: lo compartido a medias; lo marcado como de uno, solo suyo
+    const pers1 = m.variable.filter(v => v.who === 'p1').reduce((s, v) => s + v.amount, 0);
+    const pers2 = m.variable.filter(v => v.who === 'p2').reduce((s, v) => s + v.amount, 0);
+    const shared = spent - pers1 - pers2;
+    const gasto1 = shared / 2 + pers1;
+    const gasto2 = shared / 2 + pers2;
+    return {
+      income, s1, s2, fixedTotal, varTotal, spent, savings: income - spent,
+      pers1, pers2, shared, gasto1, gasto2,
+      ahorro1: s1 - gasto1, ahorro2: s2 - gasto2
+    };
+  }
+
+  function yearStats(year) {
+    const allKeys = Object.keys(state.months).sort();
+    const fixedTotal = state.fixed.reduce((s, f) => s + f.amount, 0);
+    const rentTotal = state.fixed.filter(isRent).reduce((s, f) => s + f.amount, 0);
+
+    const spentOf = k => (state.months[k].variable || []).reduce((s, v) => s + v.amount, 0) + fixedTotal;
+    const incomeOf = k => { const [s1, s2] = salOf(state.months[k]); return s1 + s2; };
+    const persOf = (k, who) => (state.months[k].variable || []).filter(v => v.who === who).reduce((s, v) => s + v.amount, 0);
+
+    // Ahorro acumulado de cada uno: mitad de lo compartido + lo personal de cada cual
+    let allTimeSavings = 0, ahorroAcum1 = 0, ahorroAcum2 = 0;
+    allKeys.forEach(k => {
+      const [s1, s2] = salOf(state.months[k]);
+      const p1 = persOf(k, 'p1'), p2 = persOf(k, 'p2');
+      const shared = spentOf(k) - p1 - p2;
+      ahorroAcum1 += s1 - shared / 2 - p1;
+      ahorroAcum2 += s2 - shared / 2 - p2;
+      allTimeSavings += incomeOf(k) - spentOf(k);
+    });
+
+    // Solo los meses del año seleccionado
+    const keys = allKeys.filter(k => k.startsWith(year + '-'));
+    let totalSpent = 0, yearSavings = 0, totalNoRent = 0;
+    const rows = keys.map(k => {
+      const spent = spentOf(k);
+      const noRent = spent - rentTotal;
+      const savings = incomeOf(k) - spent;
+      totalSpent += spent; totalNoRent += noRent; yearSavings += savings;
+      return { key: k, spent, noRent, savings };
+    });
+    const n = Math.max(1, keys.length);
+    return {
+      months: keys.length, rows: rows.reverse(), rentTotal,
+      avgSpent: totalSpent / n, avgNoRent: totalNoRent / n,
+      avgSavings: yearSavings / n, yearSavings, allTimeSavings,
+      ahorroAcum1, ahorroAcum2
+    };
+  }
+
+  function displayName(n, fallback) { return (n || '').trim() || fallback; }
+  function monthLabel(key) {
+    const [y, m] = key.split('-').map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+  }
+
+  // ---------- Render ----------
+  function render() {
+    if (activeTab === 'mes') renderMes();
+    else renderResumen();
+  }
+
+  function renderMes() {
+    const m = peekMonth(current);
+    const t = totals();
+    const n1 = displayName(state.name1, 'Persona 1');
+    const n2 = displayName(state.name2, 'Persona 2');
+
+    $('monthLabel').textContent = monthLabel(current);
+
+    const savingsClass = t.savings >= 0 ? 'green' : 'red';
+    const pct = t.income > 0 ? Math.round(t.savings / t.income * 100) : 0;
+    $('summary').innerHTML = `
+      <div class="stat"><div class="label">Ingresos</div><div class="value accent">${fmt(t.income)}</div><div class="sub">${n1} + ${n2}</div></div>
+      <div class="stat"><div class="label">Gastos fijos</div><div class="value orange">${fmt(t.fixedTotal)}</div><div class="sub">${state.fixed.length} conceptos</div></div>
+      <div class="stat"><div class="label">Gastos variables</div><div class="value orange">${fmt(t.varTotal)}</div><div class="sub">${m.variable.length} este mes</div></div>
+      <div class="stat"><div class="label">Total gastado</div><div class="value red">${fmt(t.spent)}</div><div class="sub">${t.income > 0 ? Math.round(t.spent / t.income * 100) + '% de ingresos' : ''}</div></div>
+      <div class="stat"><div class="label">Ahorro del mes</div><div class="value ${savingsClass}">${fmt(t.savings)}</div><div class="sub">${t.income > 0 ? pct + '% de ingresos' : ''}</div></div>
+    `;
+
+    // Barra: gastado en rojo + ahorro en verde. El desglose por colores va en los chips de abajo.
+    const spentPct = t.income > 0 ? Math.min(100, t.spent / t.income * 100) : (t.spent > 0 ? 100 : 0);
+    $('barWrap').innerHTML = `
+      <div class="bar-gasto" title="Gastado: ${fmt(t.spent)}" style="width:${spentPct}%"></div>
+      <div class="bar-ahorro" title="Ahorro: ${fmt(Math.max(0, t.savings))}" style="width:${Math.max(0, 100 - spentPct)}%"></div>`;
+
+    const segs = [];
+    if (t.fixedTotal > 0) segs.push(['Fijos', t.fixedTotal]);
+    const segTotals = {};
+    m.variable.forEach(v => segTotals[v.cat] = (segTotals[v.cat] || 0) + v.amount);
+    Object.entries(segTotals).sort((a, b) => b[1] - a[1]).forEach(e => segs.push(e));
+
+    $('barChips').innerHTML = segs.map(([c, val]) => {
+      const ci = catInfo(c);
+      return `<span class="chip"><span class="dot" style="background:${ci.color};"></span>${ci.emoji} ${esc(c)}: <b>${fmt(val)}</b></span>`;
+    }).join('');
+
+    $('legendGasto').textContent = fmt(t.spent);
+    $('legendAhorro').textContent = fmt(Math.max(0, t.savings));
+
+    $('name1').value = state.name1; $('salary1').value = t.s1 || '';
+    $('name2').value = state.name2; $('salary2').value = t.s2 || '';
+    $('totalIncome').textContent = `Ingresos de ${monthLabel(current)}: ` + fmt(t.income);
+
+    if (t.income > 0 || t.spent > 0) {
+      const col = v => v >= 0 ? 'var(--green)' : 'var(--red)';
+      $('splitBox').innerHTML = `
+        <div style="font-weight:600; margin-bottom:6px;">⚖️ Reparto a medias (50/50)</div>
+        <div class="split-row"><span>Gasto de ${n1} (mitad + ${fmt(t.pers1)} suyo)</span><strong>${fmt(t.gasto1)}</strong></div>
+        <div class="split-row"><span>Ahorro de ${n1} este mes</span><strong style="color:${col(t.ahorro1)};">${fmt(t.ahorro1)}</strong></div>
+        <div class="split-row" style="margin-top:6px;"><span>Gasto de ${n2} (mitad + ${fmt(t.pers2)} suyo)</span><strong>${fmt(t.gasto2)}</strong></div>
+        <div class="split-row"><span>Ahorro de ${n2} este mes</span><strong style="color:${col(t.ahorro2)};">${fmt(t.ahorro2)}</strong></div>
+        <div class="split-row muted" style="margin-top:6px;"><span>Lo compartido (${fmt(t.shared)}) se divide a medias; lo marcado como de uno, lo paga solo esa persona.</span></div>`;
+    } else {
+      $('splitBox').innerHTML = '<span class="muted">Introduce sueldos y gastos para ver el reparto.</span>';
+    }
+
+    const whoSel = $('varWho');
+    const prevWho = whoSel.value;
+    whoSel.innerHTML = `<option value="ambos">Ambos (a medias)</option><option value="p1">Solo ${n1}</option><option value="p2">Solo ${n2}</option>`;
+    if ([...whoSel.options].some(o => o.value === prevWho)) whoSel.value = prevWho;
+
+    $('fixedList').innerHTML = state.fixed.length === 0
+      ? '<div class="empty">Aún no hay gastos fijos.</div>'
+      : state.fixed.map(f => {
+          const paid = !!m.fixedPaid[f.id];
+          return `<li>
+            <span class="expense-name">${esc(f.name)}</span>
+            <button class="paid-toggle ${paid ? 'paid' : ''}" data-paid="${f.id}">${paid ? '✓ Pagado' : 'Pendiente'}</button>
+            <input type="number" class="amount-edit" value="${f.amount}" min="0" step="0.01" data-editfixed="${f.id}" title="Editar importe">
+            <button class="del-btn" data-delfixed="${f.id}" title="Eliminar">✕</button>
+          </li>`;
+        }).join('');
+
+    const whoLabel = w => w === 'p1' ? n1 : w === 'p2' ? n2 : 'Ambos';
+    $('varList').innerHTML = m.variable.length === 0
+      ? '<div class="empty">No hay gastos variables este mes. ¡Añade el primero!</div>'
+      : m.variable.slice().reverse().map(v => `<li>
+          <span class="expense-name">${esc(v.name)}<span class="cat" style="color:${catInfo(v.cat).color};">${catInfo(v.cat).emoji} ${esc(v.cat)}</span></span>
+          <span class="expense-who">${whoLabel(v.who)}</span>
+          <span class="expense-amount">${fmt(v.amount)}</span>
+          <button class="del-btn" data-delvar="${v.id}" title="Eliminar">✕</button>
+        </li>`).join('');
+
+    const cats = {};
+    state.fixed.forEach(f => cats['Fijos'] = (cats['Fijos'] || 0) + f.amount);
+    m.variable.forEach(v => cats[v.cat] = (cats[v.cat] || 0) + v.amount);
+    const maxCat = Math.max(1, ...Object.values(cats));
+    const entries = Object.entries(cats).sort((a, b) => b[1] - a[1]);
+    $('catBars').innerHTML = entries.length === 0
+      ? '<div class="empty">Sin datos todavía.</div>'
+      : entries.map(([c, val]) => {
+          const ci = catInfo(c);
+          return `
+        <div class="cat-bar-row">
+          <div class="cat-bar-top"><span>${ci.emoji} ${esc(c)}</span><b style="color:${ci.color};">${fmt(val)}</b></div>
+          <div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${val / maxCat * 100}%; background:${ci.color};"></div></div>
+        </div>`;
+        }).join('');
+  }
+
+  function renderResumen() {
+    $('yearLabel').textContent = resumenYear;
+    const o = yearStats(resumenYear);
+    const n1 = displayName(state.name1, 'Persona 1');
+    const n2 = displayName(state.name2, 'Persona 2');
+
+    // Parte de cada uno del ahorro total (reparto 50/50 con personales)
+    const splitSub = `${n1}: ${fmt(o.ahorroAcum1)} · ${n2}: ${fmt(o.ahorroAcum2)}`;
+
+    const yearClass = o.yearSavings >= 0 ? 'green' : 'red';
+    const totClass = o.allTimeSavings >= 0 ? 'green' : 'red';
+    const avgSavClass = o.avgSavings >= 0 ? 'green' : 'red';
+    $('overallStats').innerHTML = `
+      <div class="stat"><div class="label">Meses registrados</div><div class="value accent">${o.months}</div><div class="sub">en ${resumenYear}</div></div>
+      <div class="stat"><div class="label">Gasto medio mensual</div><div class="value red">${fmt(o.avgSpent)}</div></div>
+      <div class="stat"><div class="label">Gasto medio sin alquiler</div><div class="value orange">${fmt(o.avgNoRent)}</div><div class="sub">Alquiler: ${fmt(o.rentTotal)}/mes</div></div>
+      <div class="stat"><div class="label">Ahorro medio mensual</div><div class="value ${avgSavClass}">${fmt(o.avgSavings)}</div></div>
+      <div class="stat"><div class="label">Ahorro ${resumenYear}</div><div class="value ${yearClass}">${fmt(o.yearSavings)}</div><div class="sub">${o.months} ${o.months === 1 ? 'mes' : 'meses'}</div></div>
+      <div class="stat"><div class="label">Ahorro total acumulado</div><div class="value ${totClass}">${fmt(o.allTimeSavings)}</div><div class="sub">${splitSub}</div></div>
+    `;
+
+    $('monthlyTable').innerHTML = o.rows.length === 0
+      ? `<div class="empty">Sin datos en ${resumenYear}.</div>`
+      : `<table class="monthly">
+          <tr><th>Mes</th><th>Gasto total</th><th>Sin alquiler</th><th>Ahorro</th><th></th></tr>
+          ${o.rows.map(r => `<tr>
+            <td>${monthLabel(r.key)}${r.key === current ? ' <span class="muted">(actual)</span>' : ''}</td>
+            <td style="color:var(--red);">${fmt(r.spent)}</td>
+            <td style="color:var(--orange);">${fmt(r.noRent)}</td>
+            <td style="color:${r.savings >= 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${r.savings >= 0 ? '+' : ''}${fmt(r.savings)}</td>
+            <td style="width:32px;"><button class="del-btn" data-delmonth="${r.key}" title="Borrar este mes del registro">✕</button></td>
+          </tr>`).join('')}
+        </table>`;
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---------- Pestañas ----------
+  function setTab(tab) {
+    activeTab = tab;
+    $('tabMes').classList.toggle('hidden', tab !== 'mes');
+    $('tabResumen').classList.toggle('hidden', tab !== 'resumen');
+    $('tabBtnMes').classList.toggle('active', tab === 'mes');
+    $('tabBtnResumen').classList.toggle('active', tab === 'resumen');
+    $('monthNav').style.visibility = tab === 'mes' ? 'visible' : 'hidden';
+    render();
+  }
+  $('tabBtnMes').addEventListener('click', () => setTab('mes'));
+  $('tabBtnResumen').addEventListener('click', () => setTab('resumen'));
+
+  // ---------- Eventos ----------
+  ['name1', 'name2'].forEach(id => $(id).addEventListener('input', e => {
+    state[id] = e.target.value; save();
+  }));
+  ['name1', 'name2'].forEach(id => $(id).addEventListener('blur', () => render()));
+  ['salary1', 'salary2'].forEach(id => $(id).addEventListener('input', e => {
+    const val = parseFloat(e.target.value) || 0;
+    monthData(current)[id] = val;   // sueldo propio de ESTE mes, no toca los demás
+    refreshDefaults();              // los meses nuevos heredarán el del mes más reciente
+    save();
+  }));
+  ['salary1', 'salary2'].forEach(id => $(id).addEventListener('blur', () => render()));
+
+  $('addFixed').addEventListener('click', () => {
+    const name = $('fixedName').value.trim();
+    const amount = parseFloat($('fixedAmount').value);
+    if (!name || !(amount > 0)) return;
+    state.fixed.push({ id: uid(), name, amount });
+    $('fixedName').value = ''; $('fixedAmount').value = '';
+    save(); render();
+  });
+
+  $('addVar').addEventListener('click', () => {
+    const name = $('varName').value.trim();
+    const amount = parseFloat($('varAmount').value);
+    if (!name || !(amount > 0)) return;
+    monthData(current).variable.push({
+      id: uid(), name, amount,
+      cat: $('varCat').value, who: $('varWho').value
+    });
+    $('varName').value = ''; $('varAmount').value = '';
+    save(); render();
+  });
+
+  $('fixedAmount').addEventListener('keydown', e => { if (e.key === 'Enter') $('addFixed').click(); });
+  $('varAmount').addEventListener('keydown', e => { if (e.key === 'Enter') $('addVar').click(); });
+
+  document.addEventListener('click', e => {
+    const t = e.target;
+    if (t.dataset.delfixed) {
+      if (confirm('¿Eliminar este gasto fijo?')) {
+        state.fixed = state.fixed.filter(f => f.id !== t.dataset.delfixed);
+        save(); render();
+      }
+    } else if (t.dataset.delvar) {
+      const m = monthData(current);
+      m.variable = m.variable.filter(v => v.id !== t.dataset.delvar);
+      save(); render();
+    } else if (t.dataset.paid) {
+      const m = monthData(current);
+      m.fixedPaid[t.dataset.paid] = !m.fixedPaid[t.dataset.paid];
+      save(); render();
+    } else if (t.dataset.delmonth) {
+      const key = t.dataset.delmonth;
+      const nVar = (state.months[key] && state.months[key].variable || []).length;
+      const msg = nVar > 0
+        ? `¿Borrar ${monthLabel(key)} del registro? Se eliminarán sus ${nVar} gastos variables y su sueldo guardado.`
+        : `¿Borrar ${monthLabel(key)} del registro?`;
+      if (confirm(msg)) {
+        delete state.months[key];
+        refreshDefaults();
+        save(); render();
+      }
+    }
+  });
+
+  // Edición en línea del importe de un gasto fijo
+  document.addEventListener('change', e => {
+    const id = e.target.dataset && e.target.dataset.editfixed;
+    if (!id) return;
+    const f = state.fixed.find(f => f.id === id);
+    if (!f) return;
+    const val = parseFloat(e.target.value);
+    if (val >= 0) { f.amount = val; save(); render(); }
+    else { e.target.value = f.amount; }
+  });
+
+  function shiftMonth(delta) {
+    const [y, m] = current.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    current = monthKey(d);
+    render();
+  }
+  $('prevMonth').addEventListener('click', () => shiftMonth(-1));
+  $('nextMonth').addEventListener('click', () => shiftMonth(1));
+  $('prevYear').addEventListener('click', () => { resumenYear--; renderResumen(); });
+  $('nextYear').addEventListener('click', () => { resumenYear++; renderResumen(); });
+
+  // ---------- Arranque ----------
+  async function boot() {
+    try {
+      let raw = await loadRaw();
+      if (raw) raw = raw.replace(new RegExp('^\\uFEFF'), '');   // tolerar BOM en el archivo
+      if (raw) state = Object.assign(defaultState(), JSON.parse(raw));
+    } catch (e) { console.error(e); dbg('boot ERROR al leer datos: ' + e); }
+    if (isApp()) $('storageNote').textContent = 'Los datos se guardan automáticamente en tu carpeta de usuario (AppData\\GastosCasa).';
+    else $('storageNote').textContent = 'Los datos se guardan automáticamente en este navegador (localStorage).';
+    pinSalaries();      // meses antiguos sin sueldo propio: se les fija el actual
+    monthData(current);
+    refreshDefaults();
+    save();
+    render();
+
+    // La librería de Firebase carga en diferido: conectar cuando esté lista
+    const startSync = () => {
+      dbg('startSync: firebase=' + typeof firebase + ', hogar=' + state.hogar + ', readyState=' + document.readyState);
+      if (state.hogar) connectSync(state.hogar);
+      renderSync();
+    };
+    if (document.readyState === 'complete') startSync();
+    else window.addEventListener('load', startSync);
+  }
+
+  if (window.__IS_APP__) {
+    // Dentro del .exe: esperar a que pywebview inyecte la API
+    if (window.pywebview) boot();
+    else window.addEventListener('pywebviewready', boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>
