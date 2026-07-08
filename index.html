@@ -66,7 +66,6 @@
   .month-nav button:hover { background: var(--card2); }
   .month-label {
     font-size: 1.05rem; font-weight: 600; min-width: 160px; text-align: center;
-    text-transform: capitalize;
   }
 
   /* Pestañas */
@@ -183,7 +182,7 @@
   }
   table.monthly th:first-child { text-align: left; }
   table.monthly td { padding: 8px; border-bottom: 1px solid var(--border); text-align: right; }
-  table.monthly td:first-child { text-align: left; text-transform: capitalize; }
+  table.monthly td:first-child { text-align: left; }
   table.monthly tr:last-child td { border-bottom: none; }
 
   .muted { color: var(--muted); font-size: .85rem; }
@@ -223,9 +222,30 @@
   .hidden { display: none !important; }
 
   footer { text-align: center; margin-top: 30px; color: var(--muted); font-size: .78rem; }
+  /* ---------- Móvil ---------- */
   @media (max-width: 640px) {
+    body { padding: 16px 10px 100px; }   /* hueco abajo para el botón + */
     header { justify-content: center; }
     .stat .value { font-size: 1.2rem; }
+
+    /* Cabecera del mes: botones a los lados, mes en el centro, sin cortes */
+    .month-nav { width: 100%; justify-content: space-between; }
+    .month-nav button { padding: 0 10px; font-size: .8rem; }
+    .month-label { min-width: 0; flex: 1; font-size: .95rem; }
+
+    /* Pestañas en una sola línea */
+    .tabs { justify-content: center; }
+    .tabs button { padding: 8px 13px; font-size: .85rem; }
+
+    /* Filas de gastos: concepto en una línea, importes y botones debajo a la derecha */
+    .expense-list li { flex-wrap: wrap; row-gap: 4px; }
+    .expense-list li .expense-name { flex: 0 0 100%; }
+    .expense-list li .expense-name + * { margin-left: auto; }
+
+    /* Barras de categoría: que el límite pueda saltar de línea sin pisarse */
+    .cat-bar-top { flex-wrap: wrap; gap: 4px 8px; }
+
+    #fab { width: 52px; height: 52px; right: 14px; bottom: 14px; }
   }
 </style>
 </head>
@@ -338,7 +358,7 @@
           </div>
         </div>
         <div class="row" style="margin-top:4px;">
-          <div style="flex:2;"><input type="text" id="varSearch" placeholder="🔍 Buscar por concepto o categoría…"></div>
+          <div style="flex:2;"><input type="text" id="varSearch" placeholder="🔍 Buscar gasto…"></div>
           <div style="display:flex; align-items:center;"><span class="muted" id="varFilterTotal"></span></div>
         </div>
         <ul class="expense-list" id="varList"></ul>
@@ -727,7 +747,8 @@
   function displayName(n, fallback) { return (n || '').trim() || fallback; }
   function monthLabel(key) {
     const [y, m] = key.split('-').map(Number);
-    return new Date(y, m - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    const lbl = new Date(y, m - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    return lbl.charAt(0).toUpperCase() + lbl.slice(1);   // "Julio de 2026"
   }
 
   // ---------- Render ----------
