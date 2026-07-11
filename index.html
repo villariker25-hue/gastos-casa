@@ -471,7 +471,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '7 de julio de 2026';
+  const APP_UPDATED = '11 de julio de 2026';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -579,6 +579,8 @@
             applyingRemote = false;
             saveLocalOnly();
             render();
+          } else if ((remote.updatedAt || 0) < (state.updatedAt || 0)) {
+            pushSync();   // lo apuntado sin conexión se sube al reconectar
           }
         });
         renderSync();
@@ -1120,6 +1122,26 @@
     inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setTimeout(() => inp.focus({ preventScroll: true }), 350);
   });
+
+  // Entrada rápida por URL: ?importe=12,50&concepto=Mercadona&categoria=Supermercado
+  // Lo usan las automatizaciones de pago del móvil (Atajos de iPhone, MacroDroid…):
+  // la app se abre con el gasto a medio rellenar y solo hay que confirmar.
+  function handleUrlParams() {
+    const p = new URLSearchParams(location.search);
+    if (!p.has('importe')) return;
+    // limpiar la URL para que recargar no lo repita
+    history.replaceState(null, '', location.pathname);
+    const amount = parseFloat(String(p.get('importe')).replace(/[^\d.,-]/g, '').replace(',', '.'));
+    if (!(amount > 0)) return;
+    setTab('mes');
+    $('varAmount').value = amount;
+    if (p.get('concepto')) $('varName').value = p.get('concepto').trim();
+    const cat = p.get('categoria');
+    if (cat && [...$('varCat').options].some(o => o.value === cat)) $('varCat').value = cat;
+    const inp = $('varName');
+    inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => inp.focus({ preventScroll: true }), 400);
+  }
   $('tabBtnMes').addEventListener('click', () => setTab('mes'));
   $('tabBtnResumen').addEventListener('click', () => setTab('resumen'));
   $('tabBtnAjustes').addEventListener('click', () => setTab('ajustes'));
@@ -1290,6 +1312,7 @@
     refreshDefaults();
     save();
     render();
+    handleUrlParams();
 
     // La librería de Firebase carga en diferido: conectar cuando esté lista
     const startSync = () => {
