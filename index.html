@@ -1128,9 +1128,19 @@
   // la app se abre con el gasto a medio rellenar y solo hay que confirmar.
   function handleUrlParams() {
     const p = new URLSearchParams(location.search);
-    if (!p.has('importe')) return;
+    if (!p.has('importe') && !p.has('nuevo')) return;
     // limpiar la URL para que recargar no lo repita
     history.replaceState(null, '', location.pathname);
+    if (!p.has('importe')) {
+      // acceso directo "Añadir gasto": solo llevar al formulario
+      setTab('mes');
+      setTimeout(() => {
+        const inp = $('varName');
+        inp.scrollIntoView({ block: 'center' });
+        inp.focus({ preventScroll: true });
+      }, 250);
+      return;
+    }
     const amount = parseFloat(String(p.get('importe')).replace(/[^\d.,-]/g, '').replace(',', '.'));
     if (!(amount > 0)) return;
     setTab('mes');
@@ -1138,9 +1148,11 @@
     if (p.get('concepto')) $('varName').value = p.get('concepto').trim();
     const cat = p.get('categoria');
     if (cat && [...$('varCat').options].some(o => o.value === cat)) $('varCat').value = cat;
-    const inp = $('varName');
-    inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => inp.focus({ preventScroll: true }), 400);
+    setTimeout(() => {
+      const inp = $('varName');
+      inp.scrollIntoView({ block: 'center' });
+      inp.focus({ preventScroll: true });
+    }, 250);
   }
   $('tabBtnMes').addEventListener('click', () => setTab('mes'));
   $('tabBtnResumen').addEventListener('click', () => setTab('resumen'));
