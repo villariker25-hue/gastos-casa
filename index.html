@@ -313,6 +313,34 @@
         <p class="muted" id="totalIncome"></p>
       </div>
 
+      <!-- INGRESOS EXTRA -->
+      <div class="card">
+        <h2>💶 Ingresos extra de este mes</h2>
+        <p class="muted" style="margin-bottom:10px;">Dinero que no es el sueldo: bizums, devoluciones, ventas, pagas extra…</p>
+        <div class="row">
+          <div style="flex:2;">
+            <label>Concepto</label>
+            <input type="text" id="extraName" placeholder="Venta Wallapop">
+          </div>
+          <div>
+            <label>Importe (€)</label>
+            <input type="number" id="extraAmount" placeholder="50" min="0" step="0.01">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Fecha</label>
+            <input type="date" id="extraDate">
+          </div>
+          <div>
+            <label>¿De quién es?</label>
+            <select id="extraWho"></select>
+          </div>
+        </div>
+        <button class="primary" id="addExtra">Añadir ingreso</button>
+        <ul class="expense-list" id="extraList"></ul>
+      </div>
+
       <!-- GASTOS FIJOS -->
       <div class="card">
         <h2>📌 Gastos fijos mensuales</h2>
@@ -471,7 +499,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '11 de julio de 2026';
+  const APP_UPDATED = '16 de julio de 2026';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -642,17 +670,18 @@
   function monthData(key) {
     if (!state.months[key]) {
       state.months[key] = {
-        variable: [], fixedPaid: {},
+        variable: [], extra: [], fixedPaid: {},
         salary1: state.salary1 || 0, salary2: state.salary2 || 0
       };
     }
     if (!state.months[key].variable) state.months[key].variable = [];
+    if (!state.months[key].extra) state.months[key].extra = [];
     if (!state.months[key].fixedPaid) state.months[key].fixedPaid = {};
     return state.months[key];
   }
   // Solo lectura: NO crea el mes (para navegar con las flechas sin dejar rastro)
   function peekMonth(key) {
-    return state.months[key] || { variable: [], fixedPaid: {} };
+    return state.months[key] || { variable: [], extra: [], fixedPaid: {} };
   }
   // Sueldos de un mes: usa los del mes y, si no los tiene guardados, los últimos conocidos
   function salOf(md) {
@@ -679,6 +708,7 @@
   }
 
   const fmt = n => n.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' });
+  const fmtDay = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '';
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const $ = id => document.getElementById(id);
   const isRent = f => /alquiler/i.test(f.name);
@@ -689,7 +719,9 @@
     const fixedTotal = state.fixed.reduce((s, f) => s + f.amount, 0);
     const varTotal = m.variable.reduce((s, v) => s + v.amount, 0);
     const [s1, s2] = salOf(m);
-    const income = s1 + s2;
+    const extras = m.extra || [];
+    const extraTotal = extras.reduce((s, x) => s + x.amount, 0);
+    const income = s1 + s2 + extraTotal;
     const spent = fixedTotal + varTotal;
     // Reparto 50/50: lo compartido a medias; lo marcado como de uno, solo suyo
     const pers1 = m.variable.filter(v => v.who === 'p1').reduce((s, v) => s + v.amount, 0);
@@ -697,10 +729,14 @@
     const shared = spent - pers1 - pers2;
     const gasto1 = shared / 2 + pers1;
     const gasto2 = shared / 2 + pers2;
+    const extra1 = extras.filter(x => x.who === 'p1').reduce((s, x) => s + x.amount, 0);
+    const extra2 = extras.filter(x => x.who === 'p2').reduce((s, x) => s + x.amount, 0);
+    const extraAmbos = extraTotal - extra1 - extra2;
     return {
       income, s1, s2, fixedTotal, varTotal, spent, savings: income - spent,
-      pers1, pers2, shared, gasto1, gasto2,
-      ahorro1: s1 - gasto1, ahorro2: s2 - gasto2
+      pers1, pers2, shared, gasto1, gasto2, extraTotal,
+      ahorro1: s1 + extra1 + extraAmbos / 2 - gasto1,
+      ahorro2: s2 + extra2 + extraAmbos / 2 - gasto2
     };
   }
 
@@ -710,7 +746,9 @@
     const rentTotal = state.fixed.filter(isRent).reduce((s, f) => s + f.amount, 0);
 
     const spentOf = k => (state.months[k].variable || []).reduce((s, v) => s + v.amount, 0) + fixedTotal;
-    const incomeOf = k => { const [s1, s2] = salOf(state.months[k]); return s1 + s2; };
+    const extraOf = (k, who) => (state.months[k].extra || [])
+      .filter(x => !who || x.who === who).reduce((s, x) => s + x.amount, 0);
+    const incomeOf = k => { const [s1, s2] = salOf(state.months[k]); return s1 + s2 + extraOf(k); };
     const persOf = (k, who) => (state.months[k].variable || []).filter(v => v.who === who).reduce((s, v) => s + v.amount, 0);
 
     // Ahorro acumulado de cada uno: lo compartido según el modo de reparto
@@ -720,10 +758,12 @@
     allKeys.forEach(k => {
       const [s1, s2] = salOf(state.months[k]);
       const p1 = persOf(k, 'p1'), p2 = persOf(k, 'p2');
+      const e1 = extraOf(k, 'p1'), e2 = extraOf(k, 'p2');
+      const eAmbos = extraOf(k) - e1 - e2;
       const shared = spentOf(k) - p1 - p2;
       const cuota1 = porSueldo && (s1 + s2) > 0 ? s1 / (s1 + s2) : 0.5;
-      ahorroAcum1 += s1 - shared * cuota1 - p1;
-      ahorroAcum2 += s2 - shared * (1 - cuota1) - p2;
+      ahorroAcum1 += s1 + e1 + eAmbos / 2 - shared * cuota1 - p1;
+      ahorroAcum2 += s2 + e2 + eAmbos / 2 - shared * (1 - cuota1) - p2;
       allTimeSavings += incomeOf(k) - spentOf(k);
     });
 
@@ -771,7 +811,7 @@
     const savingsClass = t.savings >= 0 ? 'green' : 'red';
     const pct = t.income > 0 ? Math.round(t.savings / t.income * 100) : 0;
     $('summary').innerHTML = `
-      <div class="stat"><div class="label">Ingresos</div><div class="value accent">${fmt(t.income)}</div><div class="sub">${n1} + ${n2}</div></div>
+      <div class="stat"><div class="label">Ingresos</div><div class="value accent">${fmt(t.income)}</div><div class="sub">${t.extraTotal > 0 ? `sueldos + ${fmt(t.extraTotal)} extra` : n1 + ' + ' + n2}</div></div>
       <div class="stat"><div class="label">Gastos fijos</div><div class="value orange">${fmt(t.fixedTotal)}</div><div class="sub">${state.fixed.length} conceptos</div></div>
       <div class="stat"><div class="label">Gastos variables</div><div class="value orange">${fmt(t.varTotal)}</div><div class="sub">${m.variable.length} este mes</div></div>
       <div class="stat"><div class="label">Total gastado</div><div class="value red">${fmt(t.spent)}</div><div class="sub">${t.income > 0 ? Math.round(t.spent / t.income * 100) + '% de ingresos' : ''}</div></div>
@@ -800,12 +840,31 @@
 
     $('name1').value = state.name1; $('salary1').value = t.s1 || '';
     $('name2').value = state.name2; $('salary2').value = t.s2 || '';
-    $('totalIncome').textContent = `Ingresos de ${monthLabel(current)}: ` + fmt(t.income);
+    $('totalIncome').textContent = `Ingresos de ${monthLabel(current)}: ${fmt(t.income)}` +
+      (t.extraTotal > 0 ? ` (sueldos ${fmt(t.s1 + t.s2)} + extra ${fmt(t.extraTotal)})` : '');
 
     const whoSel = $('varWho');
     const prevWho = whoSel.value;
     whoSel.innerHTML = `<option value="ambos">Ambos (a medias)</option><option value="p1">Solo ${n1}</option><option value="p2">Solo ${n2}</option>`;
     if ([...whoSel.options].some(o => o.value === prevWho)) whoSel.value = prevWho;
+
+    // Ingresos extra: select de quién, fecha por defecto y lista
+    const extraWhoSel = $('extraWho');
+    const prevExtraWho = extraWhoSel.value;
+    extraWhoSel.innerHTML = `<option value="ambos">De ambos</option><option value="p1">De ${n1}</option><option value="p2">De ${n2}</option>`;
+    if ([...extraWhoSel.options].some(o => o.value === prevExtraWho)) extraWhoSel.value = prevExtraWho;
+    $('extraDate').value = current === monthKey(new Date()) ? todayIso() : current + '-01';
+
+    const extras = (m.extra || []).slice().sort((a, b) => ((b.date || '0') + b.id).localeCompare((a.date || '0') + a.id));
+    const extraWhoLabel = w => w === 'p1' ? 'De ' + n1 : w === 'p2' ? 'De ' + n2 : 'De ambos';
+    $('extraList').innerHTML = extras.length === 0
+      ? '<div class="empty">Sin ingresos extra este mes.</div>'
+      : extras.map(x => `<li>
+          <span class="expense-name">${esc(x.name)}<span class="cat">${x.date ? fmtDay(x.date) : ''}</span></span>
+          <span class="expense-who">${extraWhoLabel(x.who)}</span>
+          <span class="expense-amount" style="color:var(--green);">+${fmt(x.amount)}</span>
+          <button class="del-btn" data-delextra="${x.id}" title="Eliminar">✕</button>
+        </li>`).join('');
 
     $('fixedList').innerHTML = state.fixed.length === 0
       ? '<div class="empty">Aún no hay gastos fijos.</div>'
@@ -972,7 +1031,6 @@
     const n1 = displayName(state.name1, 'Persona 1');
     const n2 = displayName(state.name2, 'Persona 2');
     const whoLabel = w => w === 'p1' ? n1 : w === 'p2' ? n2 : 'Ambos';
-    const fmtDay = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '';
     const catOpts = sel => {
       const cs = allCats();
       if (sel && !cs.includes(sel)) cs.unshift(sel);   // no perder la categoría del gasto aunque esté oculta
@@ -1209,8 +1267,22 @@
     save(); render();
   });
 
+  $('addExtra').addEventListener('click', () => {
+    const name = $('extraName').value.trim();
+    const amount = parseFloat($('extraAmount').value);
+    if (!name || !(amount > 0)) return;
+    monthData(current).extra.push({
+      id: uid(), name, amount,
+      who: $('extraWho').value,
+      date: $('extraDate').value || todayIso()
+    });
+    $('extraName').value = ''; $('extraAmount').value = '';
+    save(); render();
+  });
+
   $('fixedAmount').addEventListener('keydown', e => { if (e.key === 'Enter') $('addFixed').click(); });
   $('varAmount').addEventListener('keydown', e => { if (e.key === 'Enter') $('addVar').click(); });
+  $('extraAmount').addEventListener('keydown', e => { if (e.key === 'Enter') $('addExtra').click(); });
 
   document.addEventListener('click', e => {
     const t = e.target;
@@ -1224,6 +1296,12 @@
       const v = m.variable.find(x => x.id === t.dataset.delvar);
       offerUndo(`Gasto "${v ? v.name : ''}" eliminado`);
       m.variable = m.variable.filter(x => x.id !== t.dataset.delvar);
+      save(); render();
+    } else if (t.dataset.delextra) {
+      const m = monthData(current);
+      const x = m.extra.find(e2 => e2.id === t.dataset.delextra);
+      offerUndo(`Ingreso "${x ? x.name : ''}" eliminado`);
+      m.extra = m.extra.filter(e2 => e2.id !== t.dataset.delextra);
       save(); render();
     } else if (t.dataset.editvar) {
       editingVarId = t.dataset.editvar;
