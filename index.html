@@ -428,6 +428,17 @@
       </div>
 
       <div class="card">
+        <h2>🎯 Objetivo de ahorro</h2>
+        <p class="muted" style="margin-bottom:10px;">Cuánto queréis ahorrar entre los dos cada mes. Con una cifra puesta, la pestaña del mes y el Resumen os dirán cómo vais. Déjalo vacío para desactivarlo.</p>
+        <div class="row" style="margin-bottom:0;">
+          <div>
+            <label>Objetivo mensual (€)</label>
+            <input type="number" id="goalInput" placeholder="p. ej. 800" min="0" step="10">
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>⚖️ Reparto de los gastos compartidos</h2>
         <p class="muted" style="margin-bottom:10px;">Cómo se calcula la parte de cada uno (se ve en el ahorro por persona del Resumen). Los gastos marcados "Solo Iker" o "Solo Laura" siempre los paga esa persona entera.</p>
         <div class="tabs" style="margin-bottom:0;">
@@ -499,7 +510,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '16 de julio de 2026';
+  const APP_UPDATED = '17 de julio de 2026';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -511,6 +522,7 @@
         { id: 'cap2', name: 'Caprichos Laura', amount: 250 }
       ],                    // [{id, name, amount}]
       splitMode: 'mitad',   // 'mitad' (50/50) o 'sueldo' (proporcional al sueldo)
+      savingsGoal: 0,       // objetivo de ahorro mensual (0 = desactivado)
       budgets: {},          // { "Supermercado": 400, ... } límite mensual por categoría
       customCats: {},       // { "Mascotas": {emoji, color} } categorías propias
       hiddenCats: [],       // categorías de serie ocultadas
@@ -815,7 +827,11 @@
       <div class="stat"><div class="label">Gastos fijos</div><div class="value orange">${fmt(t.fixedTotal)}</div><div class="sub">${state.fixed.length} conceptos</div></div>
       <div class="stat"><div class="label">Gastos variables</div><div class="value orange">${fmt(t.varTotal)}</div><div class="sub">${m.variable.length} este mes</div></div>
       <div class="stat"><div class="label">Total gastado</div><div class="value red">${fmt(t.spent)}</div><div class="sub">${t.income > 0 ? Math.round(t.spent / t.income * 100) + '% de ingresos' : ''}</div></div>
-      <div class="stat"><div class="label">Ahorro del mes</div><div class="value ${savingsClass}">${fmt(t.savings)}</div><div class="sub">${t.income > 0 ? pct + '% de ingresos' : ''}</div></div>
+      <div class="stat"><div class="label">Ahorro del mes</div><div class="value ${savingsClass}">${fmt(t.savings)}</div><div class="sub">${(() => {
+        const goal = state.savingsGoal || 0;
+        if (goal > 0) return t.savings >= goal ? `🎯 objetivo de ${fmt(goal)} cumplido ✅` : `🎯 faltan ${fmt(goal - t.savings)} para el objetivo`;
+        return t.income > 0 ? pct + '% de ingresos' : '';
+      })()}</div></div>
     `;
 
     // Barra: gastado en rojo + ahorro en verde. El desglose por colores va en los chips de abajo.
@@ -947,6 +963,14 @@
       <div class="stat"><div class="label">Ahorro medio mensual</div><div class="value ${avgSavClass}">${fmt(o.avgSavings)}</div></div>
       <div class="stat"><div class="label">Ahorro ${resumenYear}</div><div class="value ${yearClass}">${fmt(o.yearSavings)}</div><div class="sub">${o.months} ${o.months === 1 ? 'mes' : 'meses'}</div></div>
       <div class="stat"><div class="label">Ahorro total acumulado</div><div class="value ${totClass}">${fmt(o.allTimeSavings)}</div><div class="sub">${splitSub}</div></div>
+      ${(() => {
+        const goal = state.savingsGoal || 0;
+        if (!(goal > 0) || o.months === 0) return '';
+        const target = goal * o.months;
+        const pctGoal = Math.round(o.yearSavings / target * 100);
+        const cls = pctGoal >= 100 ? 'green' : pctGoal >= 80 ? 'orange' : 'red';
+        return `<div class="stat"><div class="label">🎯 Objetivo ${resumenYear}</div><div class="value ${cls}">${pctGoal}%</div><div class="sub">${fmt(o.yearSavings)} de ${fmt(target)} (${fmt(goal)}/mes × ${o.months})</div></div>`;
+      })()}
     `;
 
     // Gráfico de barras: ahorro de cada mes del año
@@ -1094,7 +1118,16 @@
     const mode = state.splitMode === 'sueldo' ? 'sueldo' : 'mitad';
     $('split-mitad').classList.toggle('active', mode === 'mitad');
     $('split-sueldo').classList.toggle('active', mode === 'sueldo');
+
+    // Objetivo de ahorro
+    if (document.activeElement !== $('goalInput')) $('goalInput').value = state.savingsGoal || '';
   }
+
+  $('goalInput').addEventListener('change', e => {
+    const v = parseFloat(e.target.value);
+    state.savingsGoal = v > 0 ? v : 0;
+    save(); render();
+  });
 
   $('split-mitad').addEventListener('click', () => { state.splitMode = 'mitad'; save(); renderAjustes(); });
   $('split-sueldo').addEventListener('click', () => { state.splitMode = 'sueldo'; save(); renderAjustes(); });
