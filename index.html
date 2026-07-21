@@ -353,6 +353,16 @@
             <input type="number" id="fixedAmount" placeholder="800 €" min="0" step="0.01">
           </div>
         </div>
+        <div class="row">
+          <div>
+            <label>¿De quién es?</label>
+            <select id="fixedWho"></select>
+          </div>
+          <div id="fixedShareWrap" style="display:none;">
+            <label id="fixedShareLabel">Parte de Iker (€)</label>
+            <input type="number" id="fixedShare1" placeholder="50" min="0" step="0.01">
+          </div>
+        </div>
         <button class="primary" id="addFixed">Añadir gasto fijo</button>
         <ul class="expense-list" id="fixedList"></ul>
       </div>
@@ -380,6 +390,10 @@
           <div style="min-width:110px;">
             <label>¿De quién es?</label>
             <select id="varWho"></select>
+          </div>
+          <div style="min-width:110px; display:none;" id="varShareWrap">
+            <label id="varShareLabel">Parte de Iker (€)</label>
+            <input type="number" id="varShare1" placeholder="50" min="0" step="0.01">
           </div>
           <div style="min-width:110px; display:flex; align-items:flex-end;">
             <button class="primary" id="addVar">Añadir</button>
@@ -510,7 +524,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '17 de julio de 2026';
+  const APP_UPDATED = '21 de julio de 2026';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -854,6 +868,8 @@
 
   const fmt = n => n.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' });
   const fmtDay = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '';
+  // Parte del primero en un reparto personalizado, siempre entre 0 y el total
+  const share1Of = it => Math.max(0, Math.min(it.amount, it.share1 || 0));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const $ = id => document.getElementById(id);
   const isRent = f => /alquiler/i.test(f.name);
@@ -868,9 +884,15 @@
     const extraTotal = extras.reduce((s, x) => s + x.amount, 0);
     const income = s1 + s2 + extraTotal;
     const spent = fixedTotal + varTotal;
-    // Reparto 50/50: lo compartido a medias; lo marcado como de uno, solo suyo
-    const pers1 = m.variable.filter(v => v.who === 'p1').reduce((s, v) => s + v.amount, 0);
-    const pers2 = m.variable.filter(v => v.who === 'p2').reduce((s, v) => s + v.amount, 0);
+    // Reparto: lo compartido a medias; lo asignado (solo de uno u otro reparto), a su dueño
+    let pers1 = m.variable.filter(v => v.who === 'p1').reduce((s, v) => s + v.amount, 0);
+    let pers2 = m.variable.filter(v => v.who === 'p2').reduce((s, v) => s + v.amount, 0);
+    m.variable.filter(v => v.who === 'custom').forEach(v => { pers1 += share1Of(v); pers2 += v.amount - share1Of(v); });
+    state.fixed.forEach(f => {
+      if (f.who === 'p1') pers1 += f.amount;
+      else if (f.who === 'p2') pers2 += f.amount;
+      else if (f.who === 'custom') { pers1 += share1Of(f); pers2 += f.amount - share1Of(f); }
+    });
     const shared = spent - pers1 - pers2;
     const gasto1 = shared / 2 + pers1;
     const gasto2 = shared / 2 + pers2;
@@ -895,20 +917,32 @@
       .filter(x => !who || x.who === who).reduce((s, x) => s + x.amount, 0);
     const incomeOf = k => { const [s1, s2] = salOf(state.months[k]); return s1 + s2 + extraOf(k); };
     const persOf = (k, who) => (state.months[k].variable || []).filter(v => v.who === who).reduce((s, v) => s + v.amount, 0);
+    // Parte de cada uno en los gastos variables con reparto personalizado
+    const customOf = (k, cual) => (state.months[k].variable || []).filter(v => v.who === 'custom')
+      .reduce((s, v) => s + (cual === 1 ? share1Of(v) : v.amount - share1Of(v)), 0);
+
+    // Parte fija asignada a cada uno (fijos "solo de uno" o con otro reparto)
+    let fijo1 = 0, fijo2 = 0;
+    state.fixed.forEach(f => {
+      if (f.who === 'p1') fijo1 += f.amount;
+      else if (f.who === 'p2') fijo2 += f.amount;
+      else if (f.who === 'custom') { fijo1 += share1Of(f); fijo2 += f.amount - share1Of(f); }
+    });
 
     // Ahorro acumulado de cada uno: lo compartido según el modo de reparto
-    // elegido en Ajustes (50/50 o proporcional al sueldo) + lo personal de cada cual
+    // elegido en Ajustes (50/50 o proporcional al sueldo) + lo asignado a cada cual
     const porSueldo = state.splitMode === 'sueldo';
     let allTimeSavings = 0, ahorroAcum1 = 0, ahorroAcum2 = 0;
     allKeys.forEach(k => {
       const [s1, s2] = salOf(state.months[k]);
       const p1 = persOf(k, 'p1'), p2 = persOf(k, 'p2');
+      const c1 = customOf(k, 1), c2 = customOf(k, 2);
       const e1 = extraOf(k, 'p1'), e2 = extraOf(k, 'p2');
       const eAmbos = extraOf(k) - e1 - e2;
-      const shared = spentOf(k) - p1 - p2;
+      const shared = spentOf(k) - p1 - p2 - c1 - c2 - fijo1 - fijo2;
       const cuota1 = porSueldo && (s1 + s2) > 0 ? s1 / (s1 + s2) : 0.5;
-      ahorroAcum1 += s1 + e1 + eAmbos / 2 - shared * cuota1 - p1;
-      ahorroAcum2 += s2 + e2 + eAmbos / 2 - shared * (1 - cuota1) - p2;
+      ahorroAcum1 += s1 + e1 + eAmbos / 2 - shared * cuota1 - p1 - c1 - fijo1;
+      ahorroAcum2 += s2 + e2 + eAmbos / 2 - shared * (1 - cuota1) - p2 - c2 - fijo2;
       allTimeSavings += incomeOf(k) - spentOf(k);
     });
 
@@ -994,8 +1028,18 @@
 
     const whoSel = $('varWho');
     const prevWho = whoSel.value;
-    whoSel.innerHTML = `<option value="ambos">Ambos (a medias)</option><option value="p1">Solo ${n1}</option><option value="p2">Solo ${n2}</option>`;
+    whoSel.innerHTML = `<option value="ambos">Ambos (a medias)</option><option value="p1">Solo ${n1}</option><option value="p2">Solo ${n2}</option><option value="custom">Los dos, otro reparto</option>`;
     if ([...whoSel.options].some(o => o.value === prevWho)) whoSel.value = prevWho;
+    $('varShareLabel').textContent = `Parte de ${n1} (€)`;
+    $('varShareWrap').style.display = whoSel.value === 'custom' ? '' : 'none';
+
+    // Gastos fijos: de quién es
+    const fixedWhoSel = $('fixedWho');
+    const prevFixedWho = fixedWhoSel.value;
+    fixedWhoSel.innerHTML = `<option value="ambos">Ambos (a medias)</option><option value="p1">Solo ${n1}</option><option value="p2">Solo ${n2}</option><option value="custom">Los dos, otro reparto</option>`;
+    if ([...fixedWhoSel.options].some(o => o.value === prevFixedWho)) fixedWhoSel.value = prevFixedWho;
+    $('fixedShareLabel').textContent = `Parte de ${n1} (€)`;
+    $('fixedShareWrap').style.display = fixedWhoSel.value === 'custom' ? '' : 'none';
 
     // Ingresos extra: select de quién, fecha por defecto y lista
     const extraWhoSel = $('extraWho');
@@ -1019,8 +1063,12 @@
       ? '<div class="empty">Aún no hay gastos fijos.</div>'
       : state.fixed.map(f => {
           const paid = !!m.fixedPaid[f.id];
+          const tag = f.who === 'p1' ? 'Solo ' + n1
+            : f.who === 'p2' ? 'Solo ' + n2
+            : f.who === 'custom' ? `${n1} ${fmt(share1Of(f))} · ${n2} ${fmt(f.amount - share1Of(f))}`
+            : '';
           return `<li>
-            <span class="expense-name">${esc(f.name)}</span>
+            <span class="expense-name">${esc(f.name)}${tag ? `<span class="cat">${tag}</span>` : ''}</span>
             <button class="paid-toggle ${paid ? 'paid' : ''}" data-paid="${f.id}">${paid ? '✓ Pagado' : 'Pendiente'}</button>
             <input type="number" class="amount-edit" value="${f.amount}" min="0" step="0.01" data-editfixed="${f.id}" title="Editar importe">
             <button class="del-btn" data-delfixed="${f.id}" title="Eliminar">✕</button>
@@ -1195,13 +1243,16 @@
     const m = peekMonth(current);
     const n1 = displayName(state.name1, 'Persona 1');
     const n2 = displayName(state.name2, 'Persona 2');
-    const whoLabel = w => w === 'p1' ? n1 : w === 'p2' ? n2 : 'Ambos';
+    const whoLabel = v => v.who === 'p1' ? n1
+      : v.who === 'p2' ? n2
+      : v.who === 'custom' ? `${n1} ${fmt(share1Of(v))} · ${n2} ${fmt(v.amount - share1Of(v))}`
+      : 'Ambos';
     const catOpts = sel => {
       const cs = allCats();
       if (sel && !cs.includes(sel)) cs.unshift(sel);   // no perder la categoría del gasto aunque esté oculta
       return cs.map(c => `<option value="${esc(c)}" ${c === sel ? 'selected' : ''}>${catInfo(c).emoji} ${esc(c)}</option>`).join('');
     };
-    const whoOpts = sel => [['ambos', 'Ambos (a medias)'], ['p1', 'Solo ' + n1], ['p2', 'Solo ' + n2]]
+    const whoOpts = sel => [['ambos', 'Ambos (a medias)'], ['p1', 'Solo ' + n1], ['p2', 'Solo ' + n2], ['custom', 'Los dos, otro reparto']]
       .map(([val, lbl]) => `<option value="${val}" ${val === sel ? 'selected' : ''}>${lbl}</option>`).join('');
 
     const q = varFilter.trim().toLowerCase();
@@ -1219,12 +1270,13 @@
             <input type="date" id="ev-date" value="${v.date || ''}" style="width:150px;">
             <select id="ev-cat" style="width:auto;">${catOpts(v.cat)}</select>
             <select id="ev-who" style="width:auto;">${whoOpts(v.who)}</select>
+            <input type="number" id="ev-share1" value="${v.share1 != null ? v.share1 : ''}" placeholder="parte de ${esc(n1)} €" min="0" step="0.01" style="width:130px; display:${v.who === 'custom' ? '' : 'none'};">
             <button class="paid-toggle paid" data-savevar="${v.id}">✓ Guardar</button>
             <button class="del-btn" data-cancelvar="${v.id}" title="Cancelar">✕</button>
           </li>`
         : `<li>
           <span class="expense-name">${esc(v.name)}<span class="cat" style="color:${catInfo(v.cat).color};">${catInfo(v.cat).emoji} ${esc(v.cat)}${v.date ? ' · ' + fmtDay(v.date) : ''}</span></span>
-          <span class="expense-who">${whoLabel(v.who)}</span>
+          <span class="expense-who">${whoLabel(v)}</span>
           <span class="expense-amount">${fmt(v.amount)}</span>
           <button class="del-btn" data-editvar="${v.id}" title="Editar">✎</button>
           <button class="del-btn" data-delvar="${v.id}" title="Eliminar">✕</button>
@@ -1423,8 +1475,12 @@
     const name = $('fixedName').value.trim();
     const amount = parseFloat($('fixedAmount').value);
     if (!name || !(amount > 0)) return;
-    state.fixed.push({ id: uid(), name, amount });
-    $('fixedName').value = ''; $('fixedAmount').value = '';
+    const item = { id: uid(), name, amount };
+    const who = $('fixedWho').value;
+    if (who && who !== 'ambos') item.who = who;
+    if (who === 'custom') item.share1 = Math.max(0, Math.min(amount, parseFloat($('fixedShare1').value) || 0));
+    state.fixed.push(item);
+    $('fixedName').value = ''; $('fixedAmount').value = ''; $('fixedShare1').value = '';
     save(); render();
   });
 
@@ -1432,12 +1488,14 @@
     const name = $('varName').value.trim();
     const amount = parseFloat($('varAmount').value);
     if (!name || !(amount > 0)) return;
-    monthData(current).variable.push({
+    const item = {
       id: uid(), name, amount,
       cat: $('varCat').value, who: $('varWho').value,
       date: $('varDate').value || todayIso()
-    });
-    $('varName').value = ''; $('varAmount').value = '';
+    };
+    if (item.who === 'custom') item.share1 = Math.max(0, Math.min(amount, parseFloat($('varShare1').value) || 0));
+    monthData(current).variable.push(item);
+    $('varName').value = ''; $('varAmount').value = ''; $('varShare1').value = '';
     save(); render();
   });
 
@@ -1452,6 +1510,14 @@
     });
     $('extraName').value = ''; $('extraAmount').value = '';
     save(); render();
+  });
+
+  // Mostrar el campo "parte de X" solo con reparto personalizado
+  $('varWho').addEventListener('change', () => {
+    $('varShareWrap').style.display = $('varWho').value === 'custom' ? '' : 'none';
+  });
+  $('fixedWho').addEventListener('change', () => {
+    $('fixedShareWrap').style.display = $('fixedWho').value === 'custom' ? '' : 'none';
   });
 
   $('fixedAmount').addEventListener('keydown', e => { if (e.key === 'Enter') $('addFixed').click(); });
@@ -1493,6 +1559,8 @@
         if ($('ev-date').value) v.date = $('ev-date').value;
         v.cat = $('ev-cat').value;
         v.who = $('ev-who').value;
+        if (v.who === 'custom') v.share1 = Math.max(0, Math.min(v.amount, parseFloat($('ev-share1').value) || 0));
+        else delete v.share1;
       }
       editingVarId = null;
       save(); render();
@@ -1537,6 +1605,11 @@
 
   // Edición en línea del importe de un gasto fijo y de los límites por categoría
   document.addEventListener('change', e => {
+    if (e.target.id === 'ev-who') {
+      const s = document.getElementById('ev-share1');
+      if (s) s.style.display = e.target.value === 'custom' ? '' : 'none';
+      return;
+    }
     const bcat = e.target.dataset && e.target.dataset.budget;
     if (bcat) {
       const v = parseFloat(e.target.value);
