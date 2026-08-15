@@ -67,6 +67,7 @@
   .month-label {
     font-size: 1.05rem; font-weight: 600; min-width: 160px; text-align: center;
   }
+  .month-range { display: block; font-size: .72rem; font-weight: 400; color: var(--muted); }
 
   /* Pestañas */
   .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
@@ -256,7 +257,7 @@
     <h1><span class="emoji">🏠</span> Gastos de Casa</h1>
     <div class="month-nav" id="monthNav">
       <button id="prevMonth">‹ Mes anterior</button>
-      <div class="month-label" id="monthLabel"></div>
+      <div class="month-label"><span id="monthLabel"></span><span class="month-range" id="monthRange"></span></div>
       <button id="nextMonth">Mes siguiente ›</button>
     </div>
   </header>
@@ -442,6 +443,20 @@
       </div>
 
       <div class="card">
+        <h2>📆 Cuándo empieza vuestro mes</h2>
+        <p class="muted" style="margin-bottom:10px;">Si cobráis el día 20, poned 20 y cada mes irá del 20 al 19 del siguiente. Dejadlo en 1 para el mes natural. Cambiarlo no mueve ni borra nada de lo ya apuntado.</p>
+        <div class="row" style="margin-bottom:0;">
+          <div>
+            <label>El mes empieza el día</label>
+            <input type="number" id="startDayInput" min="1" max="28" step="1" placeholder="1">
+          </div>
+          <div style="display:flex; align-items:flex-end;">
+            <span class="muted" id="startDayHint"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>🎯 Objetivo de ahorro</h2>
         <p class="muted" style="margin-bottom:10px;">Cuánto queréis ahorrar entre los dos cada mes. Con una cifra puesta, la pestaña del mes y el Resumen os dirán cómo vais. Déjalo vacío para desactivarlo.</p>
         <div class="row" style="margin-bottom:0;">
@@ -524,7 +539,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '21 de julio de 2026';
+  const APP_UPDATED = '15 de agosto de 2026';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -537,6 +552,7 @@
       ],                    // [{id, name, amount}]
       splitMode: 'mitad',   // 'mitad' (50/50) o 'sueldo' (proporcional al sueldo)
       savingsGoal: 0,       // objetivo de ahorro mensual (0 = desactivado)
+      monthStartDay: 1,     // día en que empieza vuestro mes (1 = mes natural)
       budgets: {},          // { "Supermercado": 400, ... } límite mensual por categoría
       customCats: {},       // { "Mascotas": {emoji, color} } categorías propias
       hiddenCats: [],       // categorías de serie ocultadas
@@ -729,9 +745,12 @@
           merged.hogar = code;
           const mStr = stableStringify(merged);
           if (mStr !== stableStringify(state)) {
+            const eraActual = current === monthKey(new Date());
             applyingRemote = true;
             state = merged;
             applyingRemote = false;
+            // si el otro dispositivo cambió el día de inicio del mes, seguir en el mes en curso
+            if (eraActual) current = monthKey(new Date());
             saveLocalOnly();
             render();
           }
@@ -821,8 +840,33 @@
     }
   }
 
+  // Día en que empieza vuestro mes (1 = mes natural; 20 = del 20 al 19)
+  function startDay() {
+    return Math.min(28, Math.max(1, (state && state.monthStartDay) || 1));
+  }
+
+  // El periodo se nombra por el mes en el que TERMINA, para que "hoy" siga
+  // cayendo en el mismo mes de siempre y nada tenga que moverse de sitio.
   function monthKey(d) {
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    const sd = startDay();
+    let y = d.getFullYear(), m = d.getMonth();
+    if (sd > 1 && d.getDate() >= sd) { m += 1; if (m > 11) { m = 0; y += 1; } }
+    return y + '-' + String(m + 1).padStart(2, '0');
+  }
+  const isoOf = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  // Primer y último día del periodo que se llama `key`
+  function periodRange(key) {
+    const sd = startDay();
+    const [y, m] = key.split('-').map(Number);
+    return sd <= 1
+      ? [new Date(y, m - 1, 1), new Date(y, m, 0)]
+      : [new Date(y, m - 2, sd), new Date(y, m - 1, sd - 1)];
+  }
+  function periodLabel(key) {
+    if (startDay() <= 1) return '';
+    const [a, b] = periodRange(key);
+    const f = d => d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    return `${f(a)} – ${f(b)}`;
   }
   // Crea el mes si no existe (solo al ESCRIBIR datos en él).
   // Al crearse, el mes hereda los últimos sueldos como punto de partida.
@@ -986,6 +1030,7 @@
     const n2 = displayName(state.name2, 'Persona 2');
 
     $('monthLabel').textContent = monthLabel(current);
+    $('monthRange').textContent = periodLabel(current);
 
     const savingsClass = t.savings >= 0 ? 'green' : 'red';
     const pct = t.income > 0 ? Math.round(t.savings / t.income * 100) : 0;
@@ -1046,7 +1091,7 @@
     const prevExtraWho = extraWhoSel.value;
     extraWhoSel.innerHTML = `<option value="ambos">De ambos</option><option value="p1">De ${n1}</option><option value="p2">De ${n2}</option>`;
     if ([...extraWhoSel.options].some(o => o.value === prevExtraWho)) extraWhoSel.value = prevExtraWho;
-    $('extraDate').value = current === monthKey(new Date()) ? todayIso() : current + '-01';
+    $('extraDate').value = current === monthKey(new Date()) ? todayIso() : isoOf(periodRange(current)[0]);
 
     const extras = (m.extra || []).slice().sort((a, b) => ((b.date || '0') + b.id).localeCompare((a.date || '0') + a.id));
     const extraWhoLabel = w => w === 'p1' ? 'De ' + n1 : w === 'p2' ? 'De ' + n2 : 'De ambos';
@@ -1076,7 +1121,7 @@
         }).join('');
 
     // Fecha por defecto del formulario: hoy (o día 1 si miras otro mes)
-    $('varDate').value = current === monthKey(new Date()) ? todayIso() : current + '-01';
+    $('varDate').value = current === monthKey(new Date()) ? todayIso() : isoOf(periodRange(current)[0]);
 
     // Desplegable de categorías del formulario
     const catSel = $('varCat');
@@ -1200,7 +1245,7 @@
       : `<table class="monthly">
           <tr><th>Mes</th><th>Gasto total</th><th>Sin alquiler</th><th>Ahorro</th><th></th></tr>
           ${o.rows.map(r => `<tr>
-            <td>${monthLabel(r.key)}${r.key === current ? ' <span class="muted">(actual)</span>' : ''}</td>
+            <td>${monthLabel(r.key)}${r.key === current ? ' <span class="muted">(actual)</span>' : ''}${periodLabel(r.key) ? `<span class="cat">${periodLabel(r.key)}</span>` : ''}</td>
             <td style="color:var(--red);">${fmt(r.spent)}</td>
             <td style="color:var(--orange);">${fmt(r.noRent)}</td>
             <td style="color:${r.savings >= 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${r.savings >= 0 ? '+' : ''}${fmt(r.savings)}</td>
@@ -1314,7 +1359,22 @@
 
     // Objetivo de ahorro
     if (document.activeElement !== $('goalInput')) $('goalInput').value = state.savingsGoal || '';
+
+    // Inicio del mes
+    if (document.activeElement !== $('startDayInput')) $('startDayInput').value = state.monthStartDay || 1;
+    $('startDayHint').textContent = startDay() > 1
+      ? `Mes actual: ${monthLabel(monthKey(new Date()))} (${periodLabel(monthKey(new Date()))})`
+      : 'Mes natural (del 1 al último día)';
   }
+
+  $('startDayInput').addEventListener('change', e => {
+    const v = Math.round(parseFloat(e.target.value));
+    const nuevo = v >= 1 && v <= 28 ? v : 1;
+    const eraActual = current === monthKey(new Date());   // ¿estabas viendo el mes en curso?
+    state.monthStartDay = nuevo;
+    if (eraActual) current = monthKey(new Date());        // seguir en el mes en curso con la nueva regla
+    save(); render();
+  });
 
   $('goalInput').addEventListener('change', e => {
     const v = parseFloat(e.target.value);
@@ -1649,6 +1709,7 @@
     if (isApp()) $('storageNote').textContent = 'Los datos se guardan automáticamente en tu carpeta de usuario (AppData\\GastosCasa).';
     else $('storageNote').textContent = 'Los datos se guardan automáticamente en este navegador (localStorage).';
     pinSalaries();      // meses antiguos sin sueldo propio: se les fija el actual
+    current = monthKey(new Date());   // ya con el día de inicio cargado de los ajustes
     monthData(current);
     refreshDefaults();
     save();
@@ -1674,7 +1735,7 @@
   }
 
   // Utilidades internas accesibles para diagnóstico
-  window.__gc = { mergeStates, stableStringify };
+  window.__gc = { mergeStates, stableStringify, monthKey, periodRange, periodLabel, monthLabel };
 
   // Modo sin conexión: guarda la app en el dispositivo
   if ('serviceWorker' in navigator && !window.__IS_APP__) {
