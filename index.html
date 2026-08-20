@@ -271,6 +271,7 @@
   <!-- ============ PESTAÑA: ESTE MES ============ -->
   <div id="tabMes">
 
+    <div id="salaryAlert"></div>
     <div id="budgetAlert"></div>
 
     <div class="summary" id="summary"></div>
@@ -413,6 +414,12 @@
         <div class="cat-bars" id="catBars"></div>
       </div>
 
+      <!-- CIERRE DE MES -->
+      <div class="card full-width">
+        <h2>📦 Cierre de mes</h2>
+        <div id="closeMonthBody"></div>
+      </div>
+
     </div>
   </div>
 
@@ -539,7 +546,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '15 de agosto de 2026 (sincronización reforzada)';
+  const APP_UPDATED = '20 de agosto de 2026 (cierre de mes manual)';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -553,6 +560,7 @@
       splitMode: 'mitad',   // 'mitad' (50/50) o 'sueldo' (proporcional al sueldo)
       savingsGoal: 0,       // objetivo de ahorro mensual (0 = desactivado)
       monthStartDay: 1,     // día en que empieza vuestro mes (1 = mes natural)
+      activeMonth: '',      // mes abierto: solo cambia al pulsar "Cerrar mes"
       budgets: {},          // { "Supermercado": 400, ... } límite mensual por categoría
       customCats: {},       // { "Mascotas": {emoji, color} } categorías propias
       hiddenCats: [],       // categorías de serie ocultadas
@@ -746,12 +754,12 @@
           merged.hogar = code;
           const mStr = stableStringify(merged);
           if (mStr !== stableStringify(state)) {
-            const eraActual = current === monthKey(new Date());
+            const eraActual = current === state.activeMonth;
             applyingRemote = true;
             state = merged;
             applyingRemote = false;
             // si el otro dispositivo cambió el día de inicio del mes, seguir en el mes en curso
-            if (eraActual) current = monthKey(new Date());
+            if (eraActual && state.activeMonth) current = state.activeMonth;
             saveLocalOnly();
             render();
           }
@@ -896,9 +904,9 @@
         const merged = mergeStates(state, remoteN);
         merged.hogar = state.hogar;
         if (stableStringify(merged) !== stableStringify(state)) {
-          const eraActual = current === monthKey(new Date());
+          const eraActual = current === state.activeMonth;
           state = merged;
-          if (eraActual) current = monthKey(new Date());
+          if (eraActual && state.activeMonth) current = state.activeMonth;
           saveLocalOnly();
           render();
         }
@@ -973,6 +981,11 @@
       ? [new Date(y, m - 1, 1), new Date(y, m, 0)]
       : [new Date(y, m - 2, sd), new Date(y, m - 1, sd - 1)];
   }
+  function nextKey(key) {
+    const [y, m] = key.split('-').map(Number);
+    const d = new Date(y, m, 1);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
   function periodLabel(key) {
     if (startDay() <= 1) return '';
     const [a, b] = periodRange(key);
@@ -985,7 +998,7 @@
     if (!state.months[key]) {
       state.months[key] = {
         variable: [], extra: [], fixedPaid: {},
-        salary1: state.salary1 || 0, salary2: state.salary2 || 0
+        salary1: 0, salary2: 0   // se ponen a mano: cada mes se cobra distinto
       };
     }
     if (!state.months[key].variable) state.months[key].variable = [];
@@ -1056,6 +1069,7 @@
     const extraAmbos = extraTotal - extra1 - extra2;
     return {
       income, s1, s2, fixedTotal, varTotal, spent, savings: income - spent,
+      sinSueldos: (s1 + s2) === 0,
       pers1, pers2, shared, gasto1, gasto2, extraTotal,
       ahorro1: s1 + extra1 + extraAmbos / 2 - gasto1,
       ahorro2: s2 + extra2 + extraAmbos / 2 - gasto2
@@ -1087,8 +1101,10 @@
     // Ahorro acumulado de cada uno: lo compartido según el modo de reparto
     // elegido en Ajustes (50/50 o proporcional al sueldo) + lo asignado a cada cual
     const porSueldo = state.splitMode === 'sueldo';
+    const sinSueldosDe = k => { const [a, b] = salOf(state.months[k]); return (a + b) === 0; };
     let allTimeSavings = 0, ahorroAcum1 = 0, ahorroAcum2 = 0;
     allKeys.forEach(k => {
+      if (sinSueldosDe(k)) return;   // mes aún sin cerrar: no cuenta todavía
       const [s1, s2] = salOf(state.months[k]);
       const p1 = persOf(k, 'p1'), p2 = persOf(k, 'p2');
       const c1 = customOf(k, 1), c2 = customOf(k, 2);
@@ -1103,17 +1119,18 @@
 
     // Solo los meses del año seleccionado
     const keys = allKeys.filter(k => k.startsWith(year + '-'));
-    let totalSpent = 0, yearSavings = 0, totalNoRent = 0;
+    let totalSpent = 0, yearSavings = 0, totalNoRent = 0, completos = 0;
     const rows = keys.map(k => {
       const spent = spentOf(k);
       const noRent = spent - rentTotal;
       const savings = incomeOf(k) - spent;
-      totalSpent += spent; totalNoRent += noRent; yearSavings += savings;
-      return { key: k, spent, noRent, savings };
+      const enCurso = sinSueldosDe(k);
+      if (!enCurso) { totalSpent += spent; totalNoRent += noRent; yearSavings += savings; completos++; }
+      return { key: k, spent, noRent, savings, enCurso };
     });
-    const n = Math.max(1, keys.length);
+    const n = Math.max(1, completos);
     return {
-      months: keys.length, rows: rows.reverse(), rentTotal,
+      months: completos, rows: rows.reverse(), rentTotal,
       avgSpent: totalSpent / n, avgNoRent: totalNoRent / n,
       avgSavings: yearSavings / n, yearSavings, allTimeSavings,
       ahorroAcum1, ahorroAcum2
@@ -1143,6 +1160,11 @@
     $('monthLabel').textContent = monthLabel(current);
     $('monthRange').textContent = periodLabel(current);
 
+    $('salaryAlert').innerHTML = t.sinSueldos
+      ? `<div class="alert" style="background:rgba(217,138,43,.12); border-color:rgba(217,138,43,.45); color:var(--orange);">💶 Faltan los sueldos de ${monthLabel(current)}. Hasta que los pongáis, este mes no cuenta en el ahorro ni en el Resumen.</div>`
+      : '';
+    renderCierre(t);
+
     const savingsClass = t.savings >= 0 ? 'green' : 'red';
     const pct = t.income > 0 ? Math.round(t.savings / t.income * 100) : 0;
     $('summary').innerHTML = `
@@ -1150,7 +1172,8 @@
       <div class="stat"><div class="label">Gastos fijos</div><div class="value orange">${fmt(t.fixedTotal)}</div><div class="sub">${state.fixed.length} conceptos</div></div>
       <div class="stat"><div class="label">Gastos variables</div><div class="value orange">${fmt(t.varTotal)}</div><div class="sub">${m.variable.length} este mes</div></div>
       <div class="stat"><div class="label">Total gastado</div><div class="value red">${fmt(t.spent)}</div><div class="sub">${t.income > 0 ? Math.round(t.spent / t.income * 100) + '% de ingresos' : ''}</div></div>
-      <div class="stat"><div class="label">Ahorro del mes</div><div class="value ${savingsClass}">${fmt(t.savings)}</div><div class="sub">${(() => {
+      <div class="stat"><div class="label">Ahorro del mes</div><div class="value ${t.sinSueldos ? 'muted' : savingsClass}">${t.sinSueldos ? '—' : fmt(t.savings)}</div><div class="sub">${(() => {
+        if (t.sinSueldos) return 'Falta poner los sueldos';
         const goal = state.savingsGoal || 0;
         if (goal > 0) return t.savings >= goal ? `🎯 objetivo de ${fmt(goal)} cumplido ✅` : `🎯 faltan ${fmt(goal - t.savings)} para el objetivo`;
         return t.income > 0 ? pct + '% de ingresos' : '';
@@ -1202,7 +1225,7 @@
     const prevExtraWho = extraWhoSel.value;
     extraWhoSel.innerHTML = `<option value="ambos">De ambos</option><option value="p1">De ${n1}</option><option value="p2">De ${n2}</option>`;
     if ([...extraWhoSel.options].some(o => o.value === prevExtraWho)) extraWhoSel.value = prevExtraWho;
-    $('extraDate').value = current === monthKey(new Date()) ? todayIso() : isoOf(periodRange(current)[0]);
+    $('extraDate').value = current === state.activeMonth ? todayIso() : isoOf(periodRange(current)[0]);
 
     const extras = (m.extra || []).slice().sort((a, b) => ((b.date || '0') + b.id).localeCompare((a.date || '0') + a.id));
     const extraWhoLabel = w => w === 'p1' ? 'De ' + n1 : w === 'p2' ? 'De ' + n2 : 'De ambos';
@@ -1232,7 +1255,7 @@
         }).join('');
 
     // Fecha por defecto del formulario: hoy (o día 1 si miras otro mes)
-    $('varDate').value = current === monthKey(new Date()) ? todayIso() : isoOf(periodRange(current)[0]);
+    $('varDate').value = current === state.activeMonth ? todayIso() : isoOf(periodRange(current)[0]);
 
     // Desplegable de categorías del formulario
     const catSel = $('varCat');
@@ -1312,7 +1335,7 @@
 
     // Gráfico de barras: ahorro de cada mes del año
     const savMap = {};
-    o.rows.forEach(r => savMap[r.key] = r.savings);
+    o.rows.forEach(r => { if (!r.enCurso) savMap[r.key] = r.savings; });
     const letras = ['E', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
     const vals = [];
     for (let mo = 1; mo <= 12; mo++) vals.push(savMap[resumenYear + '-' + String(mo).padStart(2, '0')]);
@@ -1356,10 +1379,10 @@
       : `<table class="monthly">
           <tr><th>Mes</th><th>Gasto total</th><th>Sin alquiler</th><th>Ahorro</th><th></th></tr>
           ${o.rows.map(r => `<tr>
-            <td>${monthLabel(r.key)}${r.key === current ? ' <span class="muted">(actual)</span>' : ''}${periodLabel(r.key) ? `<span class="cat">${periodLabel(r.key)}</span>` : ''}</td>
+            <td>${monthLabel(r.key)}${r.key === state.activeMonth ? ' <span class="muted">(abierto)</span>' : ''}${periodLabel(r.key) ? `<span class="cat">${periodLabel(r.key)}</span>` : ''}${r.enCurso ? '<span class="cat" style="color:var(--orange);">sin sueldos: no cuenta aún</span>' : ''}</td>
             <td style="color:var(--red);">${fmt(r.spent)}</td>
             <td style="color:var(--orange);">${fmt(r.noRent)}</td>
-            <td style="color:${r.savings >= 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${r.savings >= 0 ? '+' : ''}${fmt(r.savings)}</td>
+            <td style="color:${r.enCurso ? 'var(--muted)' : (r.savings >= 0 ? 'var(--green)' : 'var(--red)')}; font-weight:600;">${r.enCurso ? '—' : (r.savings >= 0 ? '+' : '') + fmt(r.savings)}</td>
             <td style="width:32px;"><button class="del-btn" data-delmonth="${r.key}" title="Borrar este mes del registro">✕</button></td>
           </tr>`).join('')}
         </table>`;
@@ -1389,6 +1412,7 @@
       }
     });
     state = restored;
+    if (state.activeMonth) current = state.activeMonth;
     hideUndo();
     save(); render();
   });
@@ -1443,6 +1467,53 @@
   }
   $('varSearch').addEventListener('input', e => { varFilter = e.target.value; buildVarList(); });
 
+  // Cierre de mes: el mes solo cambia cuando vosotros lo decidís
+  function renderCierre(t) {
+    const el = $('closeMonthBody');
+    if (!el) return;
+    const activo = state.activeMonth || current;
+    if (current !== activo) {
+      el.innerHTML = `<p class="muted">Estás viendo ${monthLabel(current)}, que ya está cerrado. El mes abierto ahora mismo es <b>${monthLabel(activo)}</b>. Puedes seguir apuntando aquí igualmente.</p>
+        <div class="row" style="margin-top:10px; margin-bottom:0;">
+          <div><button class="primary" id="goActive">Ir al mes abierto</button></div>
+          <div><button class="primary" id="reopenMonth" style="background:var(--orange);">Reabrir ${monthLabel(current)}</button></div>
+        </div>`;
+      $('goActive').addEventListener('click', () => { current = activo; render(); window.scrollTo(0, 0); });
+      $('reopenMonth').addEventListener('click', () => {
+        if (!confirm(`¿Volver a dejar ${monthLabel(current)} como mes abierto? ${monthLabel(activo)} no se borra: seguirá ahí con lo que tenga.`)) return;
+        offerUndo(`${monthLabel(current)} reabierto`);
+        state.activeMonth = current;
+        save(); render(); window.scrollTo(0, 0);
+      });
+      return;
+    }
+    const sig = nextKey(activo);
+    const col = t.savings >= 0 ? 'var(--green)' : 'var(--red)';
+    el.innerHTML = `<p class="muted" style="margin-bottom:10px;">La app no cambia de mes sola: cuando lo tengáis todo apuntado y os cuadre, cerradlo aquí y se abrirá el siguiente en blanco.</p>
+      <div class="split-box">
+        <div class="split-row"><span>Ingresos</span><strong>${fmt(t.income)}</strong></div>
+        <div class="split-row"><span>Gastos</span><strong>${fmt(t.spent)}</strong></div>
+        <div class="split-row"><span>Ahorro</span><strong style="color:${t.sinSueldos ? 'var(--muted)' : col};">${t.sinSueldos ? '—' : fmt(t.savings)}</strong></div>
+      </div>
+      <button class="primary" id="closeMonthBtn" style="margin-top:12px;">📦 Cerrar ${monthLabel(activo)} y abrir ${monthLabel(sig)}</button>`;
+    $('closeMonthBtn').addEventListener('click', () => {
+      const aviso = `¿Cerrar ${monthLabel(activo)}?
+
+Ingresos: ${fmt(t.income)}
+Gastos: ${fmt(t.spent)}
+Ahorro: ${t.sinSueldos ? 'sin calcular (faltan los sueldos)' : fmt(t.savings)}
+
+Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás volver a ${monthLabel(activo)} cuando quieras con "Mes anterior".`;
+      if (!confirm(aviso)) return;
+      offerUndo(`${monthLabel(activo)} cerrado`);
+      state.activeMonth = sig;
+      current = sig;
+      monthData(sig);
+      save(); render();
+      window.scrollTo(0, 0);
+    });
+  }
+
   function renderAjustes() {
     const hidden = state.hiddenCats || [];
     const customs = state.customCats || {};
@@ -1481,9 +1552,7 @@
   $('startDayInput').addEventListener('change', e => {
     const v = Math.round(parseFloat(e.target.value));
     const nuevo = v >= 1 && v <= 28 ? v : 1;
-    const eraActual = current === monthKey(new Date());   // ¿estabas viendo el mes en curso?
-    state.monthStartDay = nuevo;
-    if (eraActual) current = monthKey(new Date());        // seguir en el mes en curso con la nueva regla
+    state.monthStartDay = nuevo;   // solo cambia cómo se nombran los periodos
     save(); render();
   });
 
@@ -1820,7 +1889,22 @@
     if (isApp()) $('storageNote').textContent = 'Los datos se guardan automáticamente en tu carpeta de usuario (AppData\\GastosCasa).';
     else $('storageNote').textContent = 'Los datos se guardan automáticamente en este navegador (localStorage).';
     pinSalaries();      // meses antiguos sin sueldo propio: se les fija el actual
-    current = monthKey(new Date());   // ya con el día de inicio cargado de los ajustes
+    // El mes en curso lo decidís vosotros con el botón "Cerrar mes"
+    if (!state.activeMonth) {
+      state.activeMonth = monthKey(new Date());
+      // La versión anterior abría el mes sola y le copiaba el sueldo del mes
+      // anterior. Si ese mes está vacío y con el sueldo calcado, lo dejamos en
+      // blanco para que pongáis el que hayáis cobrado de verdad.
+      const k = state.activeMonth, m = state.months[k];
+      const prev = Object.keys(state.months).sort().filter(x => x < k).pop();
+      const vacio = m && !(m.variable || []).length && !(m.extra || []).length &&
+                    !Object.values(m.fixedPaid || {}).some(Boolean);
+      if (vacio && prev && state.months[prev] &&
+          m.salary1 === state.months[prev].salary1 && m.salary2 === state.months[prev].salary2) {
+        m.salary1 = 0; m.salary2 = 0;
+      }
+    }
+    current = state.activeMonth;
     monthData(current);
     refreshDefaults();
     save();
