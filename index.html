@@ -157,6 +157,10 @@
   /* Barra de ahorro */
   .bar-wrap { background: var(--card2); border-radius: 20px; height: 22px; overflow: hidden; margin-top: 10px; display: flex; }
   .bar-gasto { background: var(--red); height: 100%; transition: width .4s; }
+  .bar-pend {
+    height: 100%; transition: width .4s;
+    background: repeating-linear-gradient(45deg, var(--orange), var(--orange) 5px, rgba(255,255,255,.45) 5px, rgba(255,255,255,.45) 10px);
+  }
   .bar-ahorro { background: var(--green); height: 100%; transition: width .4s; }
   .bar-legend { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-top: 6px; }
   .bar-chips { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: .75rem; color: var(--muted); }
@@ -280,7 +284,7 @@
       <h2>💰 Ingresos vs gastos del mes</h2>
       <div class="bar-wrap" id="barWrap"></div>
       <div class="bar-legend">
-        <span>Gastado: <b id="legendGasto" style="color:var(--red);"></b></span>
+        <span>Pagado: <b id="legendGasto" style="color:var(--red);"></b></span>
         <span>🟢 Ahorro: <b id="legendAhorro"></b></span>
       </div>
       <div class="bar-chips" id="barChips"></div>
@@ -546,7 +550,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '20 de agosto de 2026 (cierre de mes manual)';
+  const APP_UPDATED = '21 de agosto de 2026 (fijos: solo cuentan al pagarlos)';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -1043,9 +1047,29 @@
   const isRent = f => /alquiler/i.test(f.name);
 
   // ---------- Cálculos ----------
+  // Un gasto fijo solo cuenta como gastado cuando lo marcáis como pagado:
+  // así el dinero que queda cuadra con el que hay de verdad en la cuenta.
+  function fixedTotals(md) {
+    const pagados = (md && md.fixedPaid) || {};
+    const r = { total: 0, pagado: 0, pendiente: 0, alquiler: 0, alquilerPagado: 0, de1: 0, de2: 0 };
+    state.fixed.forEach(f => {
+      const p = !!pagados[f.id];
+      r.total += f.amount;
+      if (isRent(f)) { r.alquiler += f.amount; if (p) r.alquilerPagado += f.amount; }
+      if (!p) return;
+      r.pagado += f.amount;
+      if (f.who === 'p1') r.de1 += f.amount;
+      else if (f.who === 'p2') r.de2 += f.amount;
+      else if (f.who === 'custom') { r.de1 += share1Of(f); r.de2 += f.amount - share1Of(f); }
+    });
+    r.pendiente = r.total - r.pagado;
+    return r;
+  }
+
   function totals() {
     const m = peekMonth(current);
-    const fixedTotal = state.fixed.reduce((s, f) => s + f.amount, 0);
+    const fx = fixedTotals(m);
+    const fixedTotal = fx.pagado;
     const varTotal = m.variable.reduce((s, v) => s + v.amount, 0);
     const [s1, s2] = salOf(m);
     const extras = m.extra || [];
@@ -1056,11 +1080,7 @@
     let pers1 = m.variable.filter(v => v.who === 'p1').reduce((s, v) => s + v.amount, 0);
     let pers2 = m.variable.filter(v => v.who === 'p2').reduce((s, v) => s + v.amount, 0);
     m.variable.filter(v => v.who === 'custom').forEach(v => { pers1 += share1Of(v); pers2 += v.amount - share1Of(v); });
-    state.fixed.forEach(f => {
-      if (f.who === 'p1') pers1 += f.amount;
-      else if (f.who === 'p2') pers2 += f.amount;
-      else if (f.who === 'custom') { pers1 += share1Of(f); pers2 += f.amount - share1Of(f); }
-    });
+    pers1 += fx.de1; pers2 += fx.de2;
     const shared = spent - pers1 - pers2;
     const gasto1 = shared / 2 + pers1;
     const gasto2 = shared / 2 + pers2;
@@ -1069,6 +1089,8 @@
     const extraAmbos = extraTotal - extra1 - extra2;
     return {
       income, s1, s2, fixedTotal, varTotal, spent, savings: income - spent,
+      fixedPendiente: fx.pendiente, fixedTotalMes: fx.total,
+      savingsFinal: income - spent - fx.pendiente,
       sinSueldos: (s1 + s2) === 0,
       pers1, pers2, shared, gasto1, gasto2, extraTotal,
       ahorro1: s1 + extra1 + extraAmbos / 2 - gasto1,
@@ -1078,10 +1100,8 @@
 
   function yearStats(year) {
     const allKeys = Object.keys(state.months).sort();
-    const fixedTotal = state.fixed.reduce((s, f) => s + f.amount, 0);
-    const rentTotal = state.fixed.filter(isRent).reduce((s, f) => s + f.amount, 0);
-
-    const spentOf = k => (state.months[k].variable || []).reduce((s, v) => s + v.amount, 0) + fixedTotal;
+    const fxOf = k => fixedTotals(state.months[k]);
+    const spentOf = k => (state.months[k].variable || []).reduce((s, v) => s + v.amount, 0) + fxOf(k).pagado;
     const extraOf = (k, who) => (state.months[k].extra || [])
       .filter(x => !who || x.who === who).reduce((s, x) => s + x.amount, 0);
     const incomeOf = k => { const [s1, s2] = salOf(state.months[k]); return s1 + s2 + extraOf(k); };
@@ -1089,14 +1109,6 @@
     // Parte de cada uno en los gastos variables con reparto personalizado
     const customOf = (k, cual) => (state.months[k].variable || []).filter(v => v.who === 'custom')
       .reduce((s, v) => s + (cual === 1 ? share1Of(v) : v.amount - share1Of(v)), 0);
-
-    // Parte fija asignada a cada uno (fijos "solo de uno" o con otro reparto)
-    let fijo1 = 0, fijo2 = 0;
-    state.fixed.forEach(f => {
-      if (f.who === 'p1') fijo1 += f.amount;
-      else if (f.who === 'p2') fijo2 += f.amount;
-      else if (f.who === 'custom') { fijo1 += share1Of(f); fijo2 += f.amount - share1Of(f); }
-    });
 
     // Ahorro acumulado de cada uno: lo compartido según el modo de reparto
     // elegido en Ajustes (50/50 o proporcional al sueldo) + lo asignado a cada cual
@@ -1110,6 +1122,8 @@
       const c1 = customOf(k, 1), c2 = customOf(k, 2);
       const e1 = extraOf(k, 'p1'), e2 = extraOf(k, 'p2');
       const eAmbos = extraOf(k) - e1 - e2;
+      const fx = fxOf(k);
+      const fijo1 = fx.de1, fijo2 = fx.de2;
       const shared = spentOf(k) - p1 - p2 - c1 - c2 - fijo1 - fijo2;
       const cuota1 = porSueldo && (s1 + s2) > 0 ? s1 / (s1 + s2) : 0.5;
       ahorroAcum1 += s1 + e1 + eAmbos / 2 - shared * cuota1 - p1 - c1 - fijo1;
@@ -1122,7 +1136,7 @@
     let totalSpent = 0, yearSavings = 0, totalNoRent = 0, completos = 0;
     const rows = keys.map(k => {
       const spent = spentOf(k);
-      const noRent = spent - rentTotal;
+      const noRent = spent - fxOf(k).alquilerPagado;
       const savings = incomeOf(k) - spent;
       const enCurso = sinSueldosDe(k);
       if (!enCurso) { totalSpent += spent; totalNoRent += noRent; yearSavings += savings; completos++; }
@@ -1130,7 +1144,8 @@
     });
     const n = Math.max(1, completos);
     return {
-      months: completos, rows: rows.reverse(), rentTotal,
+      months: completos, rows: rows.reverse(),
+      rentTotal: state.fixed.filter(isRent).reduce((a, f) => a + f.amount, 0),
       avgSpent: totalSpent / n, avgNoRent: totalNoRent / n,
       avgSavings: yearSavings / n, yearSavings, allTimeSavings,
       ahorroAcum1, ahorroAcum2
@@ -1169,7 +1184,7 @@
     const pct = t.income > 0 ? Math.round(t.savings / t.income * 100) : 0;
     $('summary').innerHTML = `
       <div class="stat"><div class="label">Ingresos</div><div class="value accent">${fmt(t.income)}</div><div class="sub">${t.extraTotal > 0 ? `sueldos + ${fmt(t.extraTotal)} extra` : n1 + ' + ' + n2}</div></div>
-      <div class="stat"><div class="label">Gastos fijos</div><div class="value orange">${fmt(t.fixedTotal)}</div><div class="sub">${state.fixed.length} conceptos</div></div>
+      <div class="stat"><div class="label">Gastos fijos pagados</div><div class="value orange">${fmt(t.fixedTotal)}</div><div class="sub">${t.fixedPendiente > 0 ? `pendientes: ${fmt(t.fixedPendiente)}` : `${state.fixed.length} conceptos, todos pagados ✓`}</div></div>
       <div class="stat"><div class="label">Gastos variables</div><div class="value orange">${fmt(t.varTotal)}</div><div class="sub">${m.variable.length} este mes</div></div>
       <div class="stat"><div class="label">Total gastado</div><div class="value red">${fmt(t.spent)}</div><div class="sub">${t.income > 0 ? Math.round(t.spent / t.income * 100) + '% de ingresos' : ''}</div></div>
       <div class="stat"><div class="label">Ahorro del mes</div><div class="value ${t.sinSueldos ? 'muted' : savingsClass}">${t.sinSueldos ? '—' : fmt(t.savings)}</div><div class="sub">${(() => {
@@ -1178,13 +1193,17 @@
         if (goal > 0) return t.savings >= goal ? `🎯 objetivo de ${fmt(goal)} cumplido ✅` : `🎯 faltan ${fmt(goal - t.savings)} para el objetivo`;
         return t.income > 0 ? pct + '% de ingresos' : '';
       })()}</div></div>
+      ${t.fixedPendiente > 0 && !t.sinSueldos ? `<div class="stat"><div class="label">Al pagar lo pendiente</div><div class="value ${t.savingsFinal >= 0 ? 'green' : 'red'}">${fmt(t.savingsFinal)}</div><div class="sub">quedan ${fmt(t.fixedPendiente)} por pagar</div></div>` : ''}
     `;
 
     // Barra: gastado en rojo + ahorro en verde. El desglose por colores va en los chips de abajo.
-    const spentPct = t.income > 0 ? Math.min(100, t.spent / t.income * 100) : (t.spent > 0 ? 100 : 0);
+    const base = Math.max(t.income, t.spent + t.fixedPendiente) || 1;
+    const spentPct = Math.min(100, t.spent / base * 100);
+    const pendPct = Math.min(100 - spentPct, t.fixedPendiente / base * 100);
     $('barWrap').innerHTML = `
-      <div class="bar-gasto" title="Gastado: ${fmt(t.spent)}" style="width:${spentPct}%"></div>
-      <div class="bar-ahorro" title="Ahorro: ${fmt(Math.max(0, t.savings))}" style="width:${Math.max(0, 100 - spentPct)}%"></div>`;
+      <div class="bar-gasto" title="Pagado: ${fmt(t.spent)}" style="width:${spentPct}%"></div>
+      <div class="bar-pend" title="Fijos pendientes de pagar: ${fmt(t.fixedPendiente)}" style="width:${pendPct}%"></div>
+      <div class="bar-ahorro" title="Queda: ${fmt(Math.max(0, t.savings))}" style="width:${Math.max(0, 100 - spentPct - pendPct)}%"></div>`;
 
     const segs = [];
     if (t.fixedTotal > 0) segs.push(['Fijos', t.fixedTotal]);
@@ -1195,9 +1214,10 @@
     $('barChips').innerHTML = segs.map(([c, val]) => {
       const ci = catInfo(c);
       return `<span class="chip"><span class="dot" style="background:${ci.color};"></span>${ci.emoji} ${esc(c)}: <b>${fmt(val)}</b></span>`;
-    }).join('');
+    }).join('') + (t.fixedPendiente > 0
+      ? `<span class="chip" style="color:var(--orange);"><span class="dot" style="background:var(--orange);"></span>⏳ Fijos por pagar: <b>${fmt(t.fixedPendiente)}</b></span>` : '');
 
-    $('legendGasto').textContent = fmt(t.spent);
+    $('legendGasto').textContent = fmt(t.spent) + (t.fixedPendiente > 0 ? ` (+${fmt(t.fixedPendiente)} pendiente)` : '');
     $('legendAhorro').textContent = fmt(Math.max(0, t.savings));
 
     $('name1').value = state.name1; $('salary1').value = t.s1 || '';
@@ -1266,7 +1286,8 @@
 
     const budgets = state.budgets || {};
     const cats = {};
-    state.fixed.forEach(f => cats['Fijos'] = (cats['Fijos'] || 0) + f.amount);
+    const fxCat = fixedTotals(m);
+    if (fxCat.pagado > 0) cats['Fijos'] = fxCat.pagado;
     m.variable.forEach(v => cats[v.cat] = (cats[v.cat] || 0) + v.amount);
     // Mostrar también categorías con límite fijado aunque este mes no tengan gasto
     Object.keys(budgets).forEach(c => { if (!(c in cats) && budgets[c] > 0) cats[c] = 0; });
