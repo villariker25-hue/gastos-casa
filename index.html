@@ -550,7 +550,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '21 de agosto de 2026 (fijos: solo cuentan al pagarlos)';
+  const APP_UPDATED = '9 de septiembre de 2026 (las correcciones ya no se deshacen)';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -663,13 +663,19 @@
     res.revived = unionTs(a.revived, b.revived);
     const dead = id => !!res.deleted[id] && !((res.revived[id] || 0) > res.deleted[id]);
 
-    // unión de listas por id, sin borrados, en orden estable
+    // Unión por id. Cuando el mismo apunte existe en los dos lados con distinto
+    // contenido, gana el que se EDITÓ más tarde (marca `mt`), no el que sincronice
+    // el último: así una copia antigua ya no puede deshacer una corrección.
     const unionItems = (x, y) => {
-      const out = (x || []).filter(it => !dead(it.id));
-      const ids = new Set(out.map(it => it.id));
-      (y || []).forEach(it => { if (!ids.has(it.id) && !dead(it.id)) out.push(it); });
-      out.sort((p, q) => p.id < q.id ? -1 : p.id > q.id ? 1 : 0);
-      return out;
+      const porId = {};
+      const meter = lista => (lista || []).forEach(it => {
+        if (dead(it.id)) return;
+        const prev = porId[it.id];
+        if (!prev) { porId[it.id] = it; return; }
+        if ((it.mt || 0) > (prev.mt || 0)) porId[it.id] = it;
+      });
+      meter(x); meter(y);   // x = versión más reciente: manda si no hay marcas
+      return Object.values(porId).sort((p, q) => p.id < q.id ? -1 : p.id > q.id ? 1 : 0);
     };
 
     res.fixed = unionItems(newer.fixed, older.fixed);
@@ -685,7 +691,32 @@
       const m = res.months[k] = Object.assign({}, mO || {}, mN || {});
       m.variable = unionItems(mN && mN.variable, mO && mO.variable);
       m.extra = unionItems(mN && mN.extra, mO && mO.extra);
-      m.fixedPaid = Object.assign({}, (mO && mO.fixedPaid) || {}, (mN && mN.fixedPaid) || {});
+
+      // Sueldos del mes: cada uno por separado, gana el escrito más tarde
+      const salMt = {};
+      [1, 2].forEach(i => {
+        const tN = ((mN || {}).salMt || {})[i] || 0, tO = ((mO || {}).salMt || {})[i] || 0;
+        const vN = mN ? mN['salary' + i] : undefined, vO = mO ? mO['salary' + i] : undefined;
+        let val, mt;
+        if (tO > tN && vO != null) { val = vO; mt = tO; }
+        else if (vN != null) { val = vN; mt = tN; }
+        else if (vO != null) { val = vO; mt = tO; }
+        if (val != null) m['salary' + i] = val;
+        if (mt) salMt[i] = mt;
+      });
+      if (Object.keys(salMt).length) m.salMt = salMt;
+
+      // Pagado / pendiente de cada fijo: gana la última pulsación
+      const paid = {}, paidMt = {};
+      [mN, mO].forEach(src => {
+        if (!src) return;
+        Object.entries(src.fixedPaid || {}).forEach(([id, val]) => {
+          const t = (src.fixedPaidMt || {})[id] || 0;
+          if (!(id in paid) || t > (paidMt[id] || 0)) { paid[id] = val; paidMt[id] = t; }
+        });
+      });
+      m.fixedPaid = paid;
+      if (Object.keys(paidMt).length) m.fixedPaidMt = paidMt;
     });
 
     res.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
@@ -720,6 +751,33 @@
 
   // Botón "Forzar sincronización"
   function forceSync() { resync(true); }
+
+  // Rescate: sustituir lo de ESTE dispositivo por lo que hay en la nube.
+  // Útil si un aparato se queda con una copia rara o desincronizada.
+  function pullFromCloud() {
+    if (!hogarRef) return;
+    if (!confirm('¿Sustituir los datos de ESTE dispositivo por los de la nube?\n\nSe descartará lo que este aparato tenga sin subir. Los demás dispositivos no se tocan.')) return;
+    const status = () => document.getElementById('syncStatus');
+    if (status()) status().textContent = '⏳ Descargando de la nube…';
+    waitConnected(8000).then(vivo => {
+      if (!vivo) throw new Error('sin conexión');
+      return hogarRef.get();
+    }).then(snap => {
+      const remote = snap.val();
+      if (!remote) throw new Error('la nube está vacía');
+      const code = state.hogar;
+      state = Object.assign(defaultState(), remote);
+      state.hogar = code;
+      if (state.activeMonth) current = state.activeMonth;
+      syncedHash = stableStringify(state);
+      saveLocalOnly();
+      render();
+      if (status()) status().textContent = '✅ Datos descargados de la nube: este dispositivo ya está igual que los demás.';
+    }).catch(e => {
+      console.error(e);
+      if (status()) status().textContent = '❌ No se pudo descargar. Comprueba la conexión y prueba de nuevo.';
+    });
+  }
 
   // Al volver a la app o al recuperar internet, ponerse al día automáticamente.
   // (En el móvil, el sistema corta la conexión cuando la app queda en segundo
@@ -941,8 +999,13 @@
         <div class="row" style="margin-top:10px;">
           <div><button class="primary" id="syncNow">🔄 Forzar sincronización</button></div>
           <div style="max-width:170px;"><button class="primary" id="syncOff" style="background:var(--red);">Desconectar</button></div>
+        </div>
+        <p class="muted" style="margin-top:12px;">¿Este dispositivo muestra datos raros o le faltan cosas? Tráete la copia buena de la nube:</p>
+        <div class="row" style="margin-top:6px; margin-bottom:0;">
+          <div><button class="primary" id="syncPull" style="background:var(--orange);">⬇️ Traer todo de la nube</button></div>
         </div>`;
       $('syncNow').addEventListener('click', forceSync);
+      $('syncPull').addEventListener('click', pullFromCloud);
       $('syncOff').addEventListener('click', disconnectSync);
       updateSyncBadge();
     } else if (state.hogar && !hogarRef) {
@@ -1726,7 +1789,10 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
   ['name1', 'name2'].forEach(id => $(id).addEventListener('blur', () => render()));
   ['salary1', 'salary2'].forEach(id => $(id).addEventListener('input', e => {
     const val = parseFloat(e.target.value) || 0;
-    monthData(current)[id] = val;   // sueldo propio de ESTE mes, no toca los demás
+    const md = monthData(current);
+    md[id] = val;                   // sueldo propio de ESTE mes, no toca los demás
+    if (!md.salMt) md.salMt = {};
+    md.salMt[id === 'salary1' ? 1 : 2] = now();
     refreshDefaults();              // los meses nuevos heredarán el del mes más reciente
     save();
   }));
@@ -1736,7 +1802,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
     const name = $('fixedName').value.trim();
     const amount = parseFloat($('fixedAmount').value);
     if (!name || !(amount > 0)) return;
-    const item = { id: uid(), name, amount };
+    const item = { id: uid(), name, amount, mt: now() };
     const who = $('fixedWho').value;
     if (who && who !== 'ambos') item.who = who;
     if (who === 'custom') item.share1 = Math.max(0, Math.min(amount, parseFloat($('fixedShare1').value) || 0));
@@ -1750,7 +1816,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
     const amount = parseFloat($('varAmount').value);
     if (!name || !(amount > 0)) return;
     const item = {
-      id: uid(), name, amount,
+      id: uid(), name, amount, mt: now(),
       cat: $('varCat').value, who: $('varWho').value,
       date: $('varDate').value || todayIso()
     };
@@ -1765,7 +1831,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
     const amount = parseFloat($('extraAmount').value);
     if (!name || !(amount > 0)) return;
     monthData(current).extra.push({
-      id: uid(), name, amount,
+      id: uid(), name, amount, mt: now(),
       who: $('extraWho').value,
       date: $('extraDate').value || todayIso()
     });
@@ -1822,6 +1888,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
         v.who = $('ev-who').value;
         if (v.who === 'custom') v.share1 = Math.max(0, Math.min(v.amount, parseFloat($('ev-share1').value) || 0));
         else delete v.share1;
+        v.mt = now();   // marca de edición: esta versión gana al sincronizar
       }
       editingVarId = null;
       save(); render();
@@ -1831,6 +1898,8 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
     } else if (t.dataset.paid) {
       const m = monthData(current);
       m.fixedPaid[t.dataset.paid] = !m.fixedPaid[t.dataset.paid];
+      if (!m.fixedPaidMt) m.fixedPaidMt = {};
+      m.fixedPaidMt[t.dataset.paid] = now();
       save(); render();
     } else if (t.dataset.delcat) {
       const c = t.dataset.delcat;
@@ -1885,7 +1954,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
     const f = state.fixed.find(f => f.id === id);
     if (!f) return;
     const val = parseFloat(e.target.value);
-    if (val >= 0) { f.amount = val; save(); render(); }
+    if (val >= 0) { f.amount = val; f.mt = now(); save(); render(); }
     else { e.target.value = f.amount; }
   });
 
