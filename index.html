@@ -2022,9 +2022,20 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
   // Utilidades internas accesibles para diagnóstico
   window.__gc = { mergeStates, stableStringify, monthKey, periodRange, periodLabel, monthLabel };
 
-  // Modo sin conexión: guarda la app en el dispositivo
+  // Modo sin conexión: guarda la app en el dispositivo.
+  // Además, en cuanto haya una versión nueva la app se recarga sola, para que
+  // ningún dispositivo se quede atrás con una copia antigua del programa.
   if ('serviceWorker' in navigator && !window.__IS_APP__) {
-    navigator.serviceWorker.register('sw.js').catch(e => console.warn('Sin modo offline:', e));
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      try { reg.update(); } catch (e) {}
+      setInterval(() => { try { reg.update(); } catch (e) {} }, 3600000);
+    }).catch(e => console.warn('Sin modo offline:', e));
+    let recargando = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (recargando) return;
+      recargando = true;
+      location.reload();
+    });
   }
 })();
 </script>

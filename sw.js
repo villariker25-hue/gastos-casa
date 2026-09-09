@@ -1,7 +1,7 @@
 // Service worker: la app funciona sin conexión.
 // Estrategia "red primero": si hay internet se usa la versión más nueva
 // (las actualizaciones llegan solas); si no, se sirve la copia guardada.
-const CACHE = 'gastos-casa-v1';
+const CACHE = 'gastos-casa-v3';
 const ASSETS = ['.', 'index.html', 'manifest.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
