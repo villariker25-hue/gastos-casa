@@ -550,7 +550,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '9 de septiembre de 2026 (las correcciones ya no se deshacen)';
+  const APP_UPDATED = '1 de octubre de 2026 (ajustes protegidos y aviso de sueldo)';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -568,6 +568,7 @@
       budgets: {},          // { "Supermercado": 400, ... } límite mensual por categoría
       customCats: {},       // { "Mascotas": {emoji, color} } categorías propias
       hiddenCats: [],       // categorías de serie ocultadas
+      cfgMt: {},            // cuándo se cambió cada ajuste, para que no los revierta una copia vieja
       deleted: {},          // lápidas de borrados {id: timestamp} para la fusión
       revived: {},          // restauraciones (deshacer) {id: timestamp}
       months: {}            // "2026-07": { variable: [{id,name,amount,cat,who,date}], fixedPaid: {fixedId:true} }
@@ -632,6 +633,14 @@
     pushSync();
   }
 
+  // Ajustes protegidos con marca de cambio propia
+  const AJUSTES = ['monthStartDay', 'savingsGoal', 'splitMode', 'name1', 'name2',
+                   'budgets', 'customCats', 'hiddenCats', 'activeMonth'];
+  function marcarAjuste(clave) {
+    if (!state.cfgMt) state.cfgMt = {};
+    state.cfgMt[clave] = now();
+  }
+
   // ---------- Fusión anti-pérdida ----------
   // Antes, al sincronizar "ganaba el último" y una versión atrasada podía
   // machacar apuntes recientes. Ahora las dos versiones se FUSIONAN: se unen
@@ -661,6 +670,17 @@
 
     res.deleted = unionTs(a.deleted, b.deleted);
     res.revived = unionTs(a.revived, b.revived);
+
+    // Ajustes (día de inicio del mes, límites, objetivo, categorías, reparto…):
+    // gana el que se cambió más tarde, igual que los apuntes.
+    res.cfgMt = Object.assign({}, newer.cfgMt || {});
+    AJUSTES.forEach(k => {
+      const tN = (newer.cfgMt || {})[k] || 0, tO = (older.cfgMt || {})[k] || 0;
+      if (tO > tN) {
+        if (older[k] !== undefined) res[k] = older[k];
+        res.cfgMt[k] = tO;
+      }
+    });
     const dead = id => !!res.deleted[id] && !((res.revived[id] || 0) > res.deleted[id]);
 
     // Unión por id. Cuando el mismo apunte existe en los dos lados con distinto
@@ -1078,6 +1098,24 @@
     return state.months[key] || { variable: [], extra: [], fixedPaid: {} };
   }
   // Sueldos de un mes: usa los del mes y, si no los tiene guardados, los últimos conocidos
+  // ¿Se ha escrito el sueldo de esa persona en ese mes? Se considera escrito si
+  // alguien lo tecleó (marca salMt) o si tiene importe (meses antiguos).
+  // Así un mes sin ingresos se puede poner a 0 a propósito y la app lo respeta.
+  function salaryPuesto(md, i) {
+    if (!md) return false;
+    if (((md.salMt || {})[i] || 0) > 0) return true;
+    const v = md['salary' + i];
+    return v != null && v > 0;
+  }
+  function faltanSueldos(md) { return !salaryPuesto(md, 1) || !salaryPuesto(md, 2); }
+  function quienFaltaSueldo(md) {
+    const n1 = displayName(state.name1, 'Persona 1'), n2 = displayName(state.name2, 'Persona 2');
+    const f = [];
+    if (!salaryPuesto(md, 1)) f.push(n1);
+    if (!salaryPuesto(md, 2)) f.push(n2);
+    return f;
+  }
+
   function salOf(md) {
     return [
       (md.salary1 != null ? md.salary1 : state.salary1) || 0,
@@ -1154,7 +1192,7 @@
       income, s1, s2, fixedTotal, varTotal, spent, savings: income - spent,
       fixedPendiente: fx.pendiente, fixedTotalMes: fx.total,
       savingsFinal: income - spent - fx.pendiente,
-      sinSueldos: (s1 + s2) === 0,
+      sinSueldos: faltanSueldos(m), faltanDe: quienFaltaSueldo(m),
       pers1, pers2, shared, gasto1, gasto2, extraTotal,
       ahorro1: s1 + extra1 + extraAmbos / 2 - gasto1,
       ahorro2: s2 + extra2 + extraAmbos / 2 - gasto2
@@ -1176,7 +1214,7 @@
     // Ahorro acumulado de cada uno: lo compartido según el modo de reparto
     // elegido en Ajustes (50/50 o proporcional al sueldo) + lo asignado a cada cual
     const porSueldo = state.splitMode === 'sueldo';
-    const sinSueldosDe = k => { const [a, b] = salOf(state.months[k]); return (a + b) === 0; };
+    const sinSueldosDe = k => faltanSueldos(state.months[k]);
     let allTimeSavings = 0, ahorroAcum1 = 0, ahorroAcum2 = 0;
     allKeys.forEach(k => {
       if (sinSueldosDe(k)) return;   // mes aún sin cerrar: no cuenta todavía
@@ -1239,7 +1277,7 @@
     $('monthRange').textContent = periodLabel(current);
 
     $('salaryAlert').innerHTML = t.sinSueldos
-      ? `<div class="alert" style="background:rgba(217,138,43,.12); border-color:rgba(217,138,43,.45); color:var(--orange);">💶 Faltan los sueldos de ${monthLabel(current)}. Hasta que los pongáis, este mes no cuenta en el ahorro ni en el Resumen.</div>`
+      ? `<div class="alert" style="background:rgba(217,138,43,.12); border-color:rgba(217,138,43,.45); color:var(--orange);">💶 Falta ${t.faltanDe.length > 1 ? 'el sueldo de los dos' : 'el sueldo de ' + esc(t.faltanDe[0])} en ${monthLabel(current)}. Hasta que esté puesto, este mes no cuenta en el ahorro ni en el Resumen.</div>`
       : '';
     renderCierre(t);
 
@@ -1251,7 +1289,7 @@
       <div class="stat"><div class="label">Gastos variables</div><div class="value orange">${fmt(t.varTotal)}</div><div class="sub">${m.variable.length} este mes</div></div>
       <div class="stat"><div class="label">Total gastado</div><div class="value red">${fmt(t.spent)}</div><div class="sub">${t.income > 0 ? Math.round(t.spent / t.income * 100) + '% de ingresos' : ''}</div></div>
       <div class="stat"><div class="label">Ahorro del mes</div><div class="value ${t.sinSueldos ? 'muted' : savingsClass}">${t.sinSueldos ? '—' : fmt(t.savings)}</div><div class="sub">${(() => {
-        if (t.sinSueldos) return 'Falta poner los sueldos';
+        if (t.sinSueldos) return t.faltanDe.length > 1 ? 'Faltan los dos sueldos' : 'Falta el sueldo de ' + esc(t.faltanDe[0]);
         const goal = state.savingsGoal || 0;
         if (goal > 0) return t.savings >= goal ? `🎯 objetivo de ${fmt(goal)} cumplido ✅` : `🎯 faltan ${fmt(goal - t.savings)} para el objetivo`;
         return t.income > 0 ? pct + '% de ingresos' : '';
@@ -1463,7 +1501,7 @@
       : `<table class="monthly">
           <tr><th>Mes</th><th>Gasto total</th><th>Sin alquiler</th><th>Ahorro</th><th></th></tr>
           ${o.rows.map(r => `<tr>
-            <td>${monthLabel(r.key)}${r.key === state.activeMonth ? ' <span class="muted">(abierto)</span>' : ''}${periodLabel(r.key) ? `<span class="cat">${periodLabel(r.key)}</span>` : ''}${r.enCurso ? '<span class="cat" style="color:var(--orange);">sin sueldos: no cuenta aún</span>' : ''}</td>
+            <td>${monthLabel(r.key)}${r.key === state.activeMonth ? ' <span class="muted">(abierto)</span>' : ''}${periodLabel(r.key) ? `<span class="cat">${periodLabel(r.key)}</span>` : ''}${r.enCurso ? '<span class="cat" style="color:var(--orange);">falta algún sueldo: no cuenta aún</span>' : ''}</td>
             <td style="color:var(--red);">${fmt(r.spent)}</td>
             <td style="color:var(--orange);">${fmt(r.noRent)}</td>
             <td style="color:${r.enCurso ? 'var(--muted)' : (r.savings >= 0 ? 'var(--green)' : 'var(--red)')}; font-weight:600;">${r.enCurso ? '—' : (r.savings >= 0 ? '+' : '') + fmt(r.savings)}</td>
@@ -1567,6 +1605,7 @@
         if (!confirm(`¿Volver a dejar ${monthLabel(current)} como mes abierto? ${monthLabel(activo)} no se borra: seguirá ahí con lo que tenga.`)) return;
         offerUndo(`${monthLabel(current)} reabierto`);
         state.activeMonth = current;
+        marcarAjuste('activeMonth');
         save(); render(); window.scrollTo(0, 0);
       });
       return;
@@ -1591,6 +1630,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
       if (!confirm(aviso)) return;
       offerUndo(`${monthLabel(activo)} cerrado`);
       state.activeMonth = sig;
+      marcarAjuste('activeMonth');
       current = sig;
       monthData(sig);
       save(); render();
@@ -1637,17 +1677,19 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
     const v = Math.round(parseFloat(e.target.value));
     const nuevo = v >= 1 && v <= 28 ? v : 1;
     state.monthStartDay = nuevo;   // solo cambia cómo se nombran los periodos
+    marcarAjuste('monthStartDay');
     save(); render();
   });
 
   $('goalInput').addEventListener('change', e => {
     const v = parseFloat(e.target.value);
     state.savingsGoal = v > 0 ? v : 0;
+    marcarAjuste('savingsGoal');
     save(); render();
   });
 
-  $('split-mitad').addEventListener('click', () => { state.splitMode = 'mitad'; save(); renderAjustes(); });
-  $('split-sueldo').addEventListener('click', () => { state.splitMode = 'sueldo'; save(); renderAjustes(); });
+  $('split-mitad').addEventListener('click', () => { state.splitMode = 'mitad'; marcarAjuste('splitMode'); save(); renderAjustes(); });
+  $('split-sueldo').addEventListener('click', () => { state.splitMode = 'sueldo'; marcarAjuste('splitMode'); save(); renderAjustes(); });
 
   $('addCat').addEventListener('click', () => {
     const name = $('newCatName').value.trim();
@@ -1666,6 +1708,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
       state.customCats[name] = { emoji, color };
     }
     $('newCatName').value = ''; $('newCatEmoji').value = '';
+    marcarAjuste('customCats'); marcarAjuste('hiddenCats');
     save(); renderAjustes();
   });
 
@@ -1784,7 +1827,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
 
   // ---------- Eventos ----------
   ['name1', 'name2'].forEach(id => $(id).addEventListener('input', e => {
-    state[id] = e.target.value; save();
+    state[id] = e.target.value; marcarAjuste(id); save();
   }));
   ['name1', 'name2'].forEach(id => $(id).addEventListener('blur', () => render()));
   ['salary1', 'salary2'].forEach(id => $(id).addEventListener('input', e => {
@@ -1913,9 +1956,11 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
         offerUndo(`Categoría "${c}" ocultada`);
         state.hiddenCats.push(c);
       }
+      marcarAjuste('customCats'); marcarAjuste('hiddenCats'); marcarAjuste('budgets');
       save(); render();
     } else if (t.dataset.restorecat) {
       state.hiddenCats = (state.hiddenCats || []).filter(c => c !== t.dataset.restorecat);
+      marcarAjuste('hiddenCats');
       save(); render();
     } else if (t.dataset.delmonth) {
       const key = t.dataset.delmonth;
@@ -1946,6 +1991,7 @@ Se abrirá ${monthLabel(sig)} sin gastos y con los sueldos en blanco. Podrás vo
       if (!state.budgets) state.budgets = {};
       if (v > 0) state.budgets[bcat] = v;
       else delete state.budgets[bcat];
+      marcarAjuste('budgets');
       save(); render();
       return;
     }
