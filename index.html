@@ -550,7 +550,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '1 de octubre de 2026 (ajustes protegidos y aviso de sueldo)';
+  const APP_UPDATED = '14 de octubre de 2026 (ahorro medio de cada uno)';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -1216,6 +1216,7 @@
     const porSueldo = state.splitMode === 'sueldo';
     const sinSueldosDe = k => faltanSueldos(state.months[k]);
     let allTimeSavings = 0, ahorroAcum1 = 0, ahorroAcum2 = 0;
+    let ahorroAnio1 = 0, ahorroAnio2 = 0;   // solo el año que se está mirando
     allKeys.forEach(k => {
       if (sinSueldosDe(k)) return;   // mes aún sin cerrar: no cuenta todavía
       const [s1, s2] = salOf(state.months[k]);
@@ -1227,8 +1228,11 @@
       const fijo1 = fx.de1, fijo2 = fx.de2;
       const shared = spentOf(k) - p1 - p2 - c1 - c2 - fijo1 - fijo2;
       const cuota1 = porSueldo && (s1 + s2) > 0 ? s1 / (s1 + s2) : 0.5;
-      ahorroAcum1 += s1 + e1 + eAmbos / 2 - shared * cuota1 - p1 - c1 - fijo1;
-      ahorroAcum2 += s2 + e2 + eAmbos / 2 - shared * (1 - cuota1) - p2 - c2 - fijo2;
+      const mes1 = s1 + e1 + eAmbos / 2 - shared * cuota1 - p1 - c1 - fijo1;
+      const mes2 = s2 + e2 + eAmbos / 2 - shared * (1 - cuota1) - p2 - c2 - fijo2;
+      ahorroAcum1 += mes1;
+      ahorroAcum2 += mes2;
+      if (k.startsWith(year + '-')) { ahorroAnio1 += mes1; ahorroAnio2 += mes2; }
       allTimeSavings += incomeOf(k) - spentOf(k);
     });
 
@@ -1249,7 +1253,8 @@
       rentTotal: state.fixed.filter(isRent).reduce((a, f) => a + f.amount, 0),
       avgSpent: totalSpent / n, avgNoRent: totalNoRent / n,
       avgSavings: yearSavings / n, yearSavings, allTimeSavings,
-      ahorroAcum1, ahorroAcum2
+      ahorroAcum1, ahorroAcum2,
+      avgPersona1: ahorroAnio1 / n, avgPersona2: ahorroAnio2 / n
     };
   }
 
@@ -1442,7 +1447,7 @@
       <div class="stat"><div class="label">Meses registrados</div><div class="value accent">${o.months}</div><div class="sub">en ${resumenYear}</div></div>
       <div class="stat"><div class="label">Gasto medio mensual</div><div class="value red">${fmt(o.avgSpent)}</div></div>
       <div class="stat"><div class="label">Gasto medio sin alquiler</div><div class="value orange">${fmt(o.avgNoRent)}</div><div class="sub">Alquiler: ${fmt(o.rentTotal)}/mes</div></div>
-      <div class="stat"><div class="label">Ahorro medio mensual</div><div class="value ${avgSavClass}">${fmt(o.avgSavings)}</div></div>
+      <div class="stat"><div class="label">Ahorro medio mensual</div><div class="value ${avgSavClass}">${fmt(o.avgSavings)}</div>${o.months > 0 ? `<div class="sub">${n1}: ${fmt(o.avgPersona1)} · ${n2}: ${fmt(o.avgPersona2)}</div>` : ''}</div>
       <div class="stat"><div class="label">Ahorro ${resumenYear}</div><div class="value ${yearClass}">${fmt(o.yearSavings)}</div><div class="sub">${o.months} ${o.months === 1 ? 'mes' : 'meses'}</div></div>
       <div class="stat"><div class="label">Ahorro total acumulado</div><div class="value ${totClass}">${fmt(o.allTimeSavings)}</div><div class="sub">${splitSub}</div></div>
       ${(() => {
