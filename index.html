@@ -26,6 +26,9 @@
     --orange: #d98a2b;
     --border: #dce8de;
     --radius: 14px;
+    /* Colores de cada persona en gráficos (validados para daltonismo y contraste) */
+    --serie1: #2a78d6;
+    --serie2: #eb6834;
   }
   body.dark {
     --bg: #10151d;
@@ -38,6 +41,8 @@
     --red: #ef6a6a;
     --orange: #e0a04a;
     --border: #2a3543;
+    --serie1: #3987e5;
+    --serie2: #d95926;
   }
   body.dark h1 { color: #dde5ee; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -186,9 +191,57 @@
     letter-spacing: .05em; padding: 6px 8px; border-bottom: 1px solid var(--border);
   }
   table.monthly th:first-child { text-align: left; }
-  table.monthly td { padding: 8px; border-bottom: 1px solid var(--border); text-align: right; }
+  table.monthly td { padding: 8px; border-bottom: 1px solid var(--border); text-align: right; font-variant-numeric: tabular-nums; vertical-align: top; }
   table.monthly td:first-child { text-align: left; }
   table.monthly tr:last-child td { border-bottom: none; }
+  table.monthly .det { display: block; font-size: .72rem; color: var(--muted); font-weight: 400; white-space: nowrap; margin-top: 2px; }
+  .tabla-scroll { overflow-x: auto; }
+
+  /* Identidad de cada persona: punto de color al lado del texto (el texto no lleva el color) */
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  .dot.s1 { background: var(--serie1); }
+  .dot.s2 { background: var(--serie2); }
+
+  /* Cifra principal del Resumen */
+  .hero { text-align: center; margin-bottom: 16px; padding: 22px 18px; }
+  .hero-label { font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .hero-value { font-size: 3rem; font-weight: 700; line-height: 1.1; margin: 6px 0 10px; }
+  .hero-value.green { color: var(--green); }
+  .hero-value.red { color: var(--red); }
+  .hero-split { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px 20px; font-size: .95rem; }
+  .hero-split b { font-weight: 600; }
+  .hero-foot { margin-top: 10px; font-size: .82rem; color: var(--muted); }
+
+  /* Gráfico de ahorro por meses */
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .82rem; color: var(--text); margin-bottom: 8px; }
+  .chart-wrap { position: relative; }
+  .chart-tip {
+    position: absolute; pointer-events: none; background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: .8rem;
+    box-shadow: 0 4px 14px rgba(0,0,0,.14); white-space: nowrap; z-index: 5; line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+  }
+  .chart-tip .t { font-weight: 600; margin-bottom: 2px; }
+  .chart-note { font-size: .78rem; color: var(--muted); margin-top: 6px; }
+
+  /* Detalle mes a mes en el móvil: cada mes es una ficha en vez de una fila ancha */
+  @media (max-width: 640px) {
+    table.monthly, table.monthly tbody { display: block; }
+    table.monthly tr:first-child { display: none; }                 /* cabecera: va dentro de cada ficha */
+    table.monthly tr {
+      display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1.25fr) 32px; gap: 4px 6px;
+      padding: 10px 0; border-bottom: 1px solid var(--border);
+    }
+    table.monthly tr:last-child { border-bottom: none; }
+    table.monthly td { border: none; padding: 0; text-align: left; }
+    table.monthly td:first-child { grid-column: 1 / 4; font-weight: 600; }
+    table.monthly td:last-child { grid-column: 4; grid-row: 1; }
+    table.monthly td[data-label]::before {
+      content: attr(data-label); display: block; font-size: .66rem; font-weight: 400;
+      color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+    }
+    table.monthly .det { font-size: .7rem; }
+  }
 
   .muted { color: var(--muted); font-size: .85rem; }
   .empty { color: var(--muted); font-size: .85rem; text-align: center; padding: 16px 0; }
@@ -523,17 +576,18 @@
       </div>
     </div>
 
+    <div class="card hero" id="resumenHero"></div>
+
     <div class="summary" id="overallStats"></div>
 
     <div class="card" style="margin-bottom:16px;">
-      <h2>📉 Evolución del ahorro</h2>
+      <h2>📊 Ahorro de cada mes</h2>
       <div id="savingsChart"></div>
     </div>
 
     <div class="card">
       <h2>📅 Detalle mes a mes</h2>
-      <p class="muted" style="margin-bottom:10px;">"Sin alquiler" excluye los gastos fijos cuyo nombre contiene "alquiler".</p>
-      <div id="monthlyTable"></div>
+      <div class="tabla-scroll" id="monthlyTable"></div>
     </div>
   </div>
 
@@ -550,7 +604,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '14 de octubre de 2026 (ahorro medio de cada uno)';
+  const APP_UPDATED = '21 de octubre de 2026 (resumen más claro)';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -1217,6 +1271,8 @@
     const sinSueldosDe = k => faltanSueldos(state.months[k]);
     let allTimeSavings = 0, ahorroAcum1 = 0, ahorroAcum2 = 0;
     let ahorroAnio1 = 0, ahorroAnio2 = 0;   // solo el año que se está mirando
+    const porPersona = {};                   // ahorro de cada uno, mes a mes
+    let hayOtrosAnios = false;
     allKeys.forEach(k => {
       if (sinSueldosDe(k)) return;   // mes aún sin cerrar: no cuenta todavía
       const [s1, s2] = salOf(state.months[k]);
@@ -1232,7 +1288,9 @@
       const mes2 = s2 + e2 + eAmbos / 2 - shared * (1 - cuota1) - p2 - c2 - fijo2;
       ahorroAcum1 += mes1;
       ahorroAcum2 += mes2;
+      porPersona[k] = { p1: mes1, p2: mes2 };
       if (k.startsWith(year + '-')) { ahorroAnio1 += mes1; ahorroAnio2 += mes2; }
+      else hayOtrosAnios = true;
       allTimeSavings += incomeOf(k) - spentOf(k);
     });
 
@@ -1245,7 +1303,8 @@
       const savings = incomeOf(k) - spent;
       const enCurso = sinSueldosDe(k);
       if (!enCurso) { totalSpent += spent; totalNoRent += noRent; yearSavings += savings; completos++; }
-      return { key: k, spent, noRent, savings, enCurso };
+      const pp = porPersona[k] || {};
+      return { key: k, income: incomeOf(k), spent, noRent, savings, enCurso, p1: pp.p1, p2: pp.p2 };
     });
     const n = Math.max(1, completos);
     return {
@@ -1254,7 +1313,8 @@
       avgSpent: totalSpent / n, avgNoRent: totalNoRent / n,
       avgSavings: yearSavings / n, yearSavings, allTimeSavings,
       ahorroAcum1, ahorroAcum2,
-      avgPersona1: ahorroAnio1 / n, avgPersona2: ahorroAnio2 / n
+      avgPersona1: ahorroAnio1 / n, avgPersona2: ahorroAnio2 / n,
+      anio1: ahorroAnio1, anio2: ahorroAnio2, hayOtrosAnios
     };
   }
 
@@ -1436,84 +1496,194 @@
     const o = yearStats(resumenYear);
     const n1 = displayName(state.name1, 'Persona 1');
     const n2 = displayName(state.name2, 'Persona 2');
+    const reparto = state.splitMode === 'sueldo' ? 'según sueldo' : '50/50';
+    const enCurso = o.rows.filter(r => r.enCurso);
+    const nombreMes = k => monthLabel(k).split(' ')[0];
+    const quienes = (a, b) =>
+      `<i class="dot s1"></i>${esc(n1)} ${fmt(a)}<br><i class="dot s2"></i>${esc(n2)} ${fmt(b)}`;
 
-    // Parte de cada uno del ahorro total, según el modo de reparto de Ajustes
-    const splitSub = `${n1}: ${fmt(o.ahorroAcum1)} · ${n2}: ${fmt(o.ahorroAcum2)} (${state.splitMode === 'sueldo' ? 'según sueldo' : '50/50'})`;
-
-    const yearClass = o.yearSavings >= 0 ? 'green' : 'red';
-    const totClass = o.allTimeSavings >= 0 ? 'green' : 'red';
-    const avgSavClass = o.avgSavings >= 0 ? 'green' : 'red';
-    $('overallStats').innerHTML = `
-      <div class="stat"><div class="label">Meses registrados</div><div class="value accent">${o.months}</div><div class="sub">en ${resumenYear}</div></div>
-      <div class="stat"><div class="label">Gasto medio mensual</div><div class="value red">${fmt(o.avgSpent)}</div></div>
-      <div class="stat"><div class="label">Gasto medio sin alquiler</div><div class="value orange">${fmt(o.avgNoRent)}</div><div class="sub">Alquiler: ${fmt(o.rentTotal)}/mes</div></div>
-      <div class="stat"><div class="label">Ahorro medio mensual</div><div class="value ${avgSavClass}">${fmt(o.avgSavings)}</div>${o.months > 0 ? `<div class="sub">${n1}: ${fmt(o.avgPersona1)} · ${n2}: ${fmt(o.avgPersona2)}</div>` : ''}</div>
-      <div class="stat"><div class="label">Ahorro ${resumenYear}</div><div class="value ${yearClass}">${fmt(o.yearSavings)}</div><div class="sub">${o.months} ${o.months === 1 ? 'mes' : 'meses'}</div></div>
-      <div class="stat"><div class="label">Ahorro total acumulado</div><div class="value ${totClass}">${fmt(o.allTimeSavings)}</div><div class="sub">${splitSub}</div></div>
-      ${(() => {
-        const goal = state.savingsGoal || 0;
-        if (!(goal > 0) || o.months === 0) return '';
-        const target = goal * o.months;
-        const pctGoal = Math.round(o.yearSavings / target * 100);
-        const cls = pctGoal >= 100 ? 'green' : pctGoal >= 80 ? 'orange' : 'red';
-        return `<div class="stat"><div class="label">🎯 Objetivo ${resumenYear}</div><div class="value ${cls}">${pctGoal}%</div><div class="sub">${fmt(o.yearSavings)} de ${fmt(target)} (${fmt(goal)}/mes × ${o.months})</div></div>`;
-      })()}
-    `;
-
-    // Gráfico de barras: ahorro de cada mes del año
-    const savMap = {};
-    o.rows.forEach(r => { if (!r.enCurso) savMap[r.key] = r.savings; });
-    const letras = ['E', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
-    const vals = [];
-    for (let mo = 1; mo <= 12; mo++) vals.push(savMap[resumenYear + '-' + String(mo).padStart(2, '0')]);
-    const present = vals.filter(v => v != null);
-    if (present.length === 0) {
-      $('savingsChart').innerHTML = `<div class="empty">Sin datos en ${resumenYear}.</div>`;
+    // 1. La cifra principal: cuánto lleváis ahorrado este año y cuánto es de cada uno
+    if (o.months === 0) {
+      $('resumenHero').innerHTML = `
+        <div class="hero-label">Ahorrado en ${resumenYear}</div>
+        <div class="hero-value" style="color:var(--muted);">—</div>
+        <div class="hero-foot">${enCurso.length ? nombreMes(enCurso[0].key) + ' aún no cuenta: falta algún sueldo.' : 'Sin meses registrados este año.'}</div>`;
     } else {
-      // % de mejora o empeora del ahorro respecto al mes anterior con datos
-      const pcts = [];
-      let prev = null;
-      vals.forEach((v, i) => {
-        if (v != null && prev != null && prev !== 0) pcts[i] = (v - prev) / Math.abs(prev) * 100;
-        if (v != null) prev = v;
-      });
-
-      const maxV = Math.max(0, ...present), minV = Math.min(0, ...present);
-      const top = 26, plotH = 100, scale = plotH / ((maxV - minV) || 1);
-      const y0 = top + maxV * scale;
-      let svg = `<svg viewBox="0 0 620 166" style="width:100%; height:auto;" xmlns="http://www.w3.org/2000/svg">`;
-      svg += `<line x1="8" y1="${y0}" x2="612" y2="${y0}" stroke="var(--border)" stroke-width="1"/>`;
-      vals.forEach((v, i) => {
-        const x = 10 + i * 50;
-        if (v != null) {
-          let h = Math.abs(v) * scale;
-          if (h < 2) h = 2;
-          const y = v >= 0 ? y0 - h : y0;
-          svg += `<rect x="${x}" y="${y}" width="36" height="${h}" rx="4" fill="${v >= 0 ? 'var(--green)' : 'var(--red)'}"><title>${monthLabel(resumenYear + '-' + String(i + 1).padStart(2, '0'))}: ${fmt(v)}${pcts[i] != null ? ' (' + (pcts[i] >= 0 ? '+' : '') + Math.round(pcts[i]) + '% vs mes anterior)' : ''}</title></rect>`;
-        }
-        if (pcts[i] != null) {
-          const p = pcts[i];
-          svg += `<text x="${x + 18}" y="16" text-anchor="middle" font-size="10" font-weight="600" fill="${p >= 0 ? 'var(--green)' : 'var(--red)'}">${p >= 0 ? '+' : ''}${Math.round(p)}%</text>`;
-        }
-        svg += `<text x="${x + 18}" y="159" text-anchor="middle" font-size="11" fill="var(--muted)">${letras[i]}</text>`;
-      });
-      svg += '</svg>';
-      $('savingsChart').innerHTML = svg;
+      $('resumenHero').innerHTML = `
+        <div class="hero-label">Ahorrado en ${resumenYear}</div>
+        <div class="hero-value ${o.yearSavings >= 0 ? 'green' : 'red'}">${fmt(o.yearSavings)}</div>
+        <div class="hero-split">
+          <span><i class="dot s1"></i>${esc(n1)} <b>${fmt(o.anio1)}</b></span>
+          <span><i class="dot s2"></i>${esc(n2)} <b>${fmt(o.anio2)}</b></span>
+        </div>
+        <div class="hero-foot">en ${o.months} ${o.months === 1 ? 'mes' : 'meses'} · reparto ${reparto}${enCurso.length ? ' · ' + enCurso.map(r => nombreMes(r.key)).join(', ') + ' aún no cuenta (falta algún sueldo)' : ''}</div>`;
     }
 
+    // 2. Tarjetas clave: medias del año (y el total histórico solo si hay más de un año)
+    const tiles = [];
+    if (o.months > 0) {
+      tiles.push(`<div class="stat"><div class="label">Ahorro medio al mes</div><div class="value ${o.avgSavings >= 0 ? 'green' : 'red'}">${fmt(o.avgSavings)}</div><div class="sub">${quienes(o.avgPersona1, o.avgPersona2)}</div></div>`);
+      tiles.push(`<div class="stat"><div class="label">Gasto medio al mes</div><div class="value red">${fmt(o.avgSpent)}</div><div class="sub">sin alquiler: ${fmt(o.avgNoRent)}</div></div>`);
+    }
+    const goal = state.savingsGoal || 0;
+    if (goal > 0 && o.months > 0) {
+      const target = goal * o.months;
+      const pctGoal = Math.round(o.yearSavings / target * 100);
+      const cls = pctGoal >= 100 ? 'green' : pctGoal >= 80 ? 'orange' : 'red';
+      tiles.push(`<div class="stat"><div class="label">🎯 Objetivo ${resumenYear}</div><div class="value ${cls}">${pctGoal}%</div><div class="sub">${fmt(o.yearSavings)} de ${fmt(target)} (${fmt(goal)}/mes × ${o.months})</div></div>`);
+    }
+    if (o.hayOtrosAnios) {
+      tiles.push(`<div class="stat"><div class="label">Total ahorrado (todos los años)</div><div class="value ${o.allTimeSavings >= 0 ? 'green' : 'red'}">${fmt(o.allTimeSavings)}</div><div class="sub">${quienes(o.ahorroAcum1, o.ahorroAcum2)}</div></div>`);
+    }
+    $('overallStats').innerHTML = tiles.join('');
+
+    // 3. Gráfico: ahorro de cada mes, partido por persona
+    renderSavingsChart(o, n1, n2, enCurso);
+
+    // 4. Tabla: ingresos, gastos y ahorro de cada mes, con lo de cada uno
     $('monthlyTable').innerHTML = o.rows.length === 0
       ? `<div class="empty">Sin datos en ${resumenYear}.</div>`
       : `<table class="monthly">
-          <tr><th>Mes</th><th>Gasto total</th><th>Sin alquiler</th><th>Ahorro</th><th></th></tr>
+          <tr><th>Mes</th><th>Ingresos</th><th>Gastos</th><th>Ahorro</th><th></th></tr>
           ${o.rows.map(r => `<tr>
-            <td>${monthLabel(r.key)}${r.key === state.activeMonth ? ' <span class="muted">(abierto)</span>' : ''}${periodLabel(r.key) ? `<span class="cat">${periodLabel(r.key)}</span>` : ''}${r.enCurso ? '<span class="cat" style="color:var(--orange);">falta algún sueldo: no cuenta aún</span>' : ''}</td>
-            <td style="color:var(--red);">${fmt(r.spent)}</td>
-            <td style="color:var(--orange);">${fmt(r.noRent)}</td>
-            <td style="color:${r.enCurso ? 'var(--muted)' : (r.savings >= 0 ? 'var(--green)' : 'var(--red)')}; font-weight:600;">${r.enCurso ? '—' : (r.savings >= 0 ? '+' : '') + fmt(r.savings)}</td>
+            <td>${monthLabel(r.key)}${r.key === state.activeMonth ? ' <span class="muted">(abierto)</span>' : ''}${periodLabel(r.key) ? `<span class="det">${periodLabel(r.key)}</span>` : ''}${r.enCurso ? '<span class="det" style="color:var(--orange);">falta algún sueldo: no cuenta aún</span>' : ''}</td>
+            <td data-label="Ingresos">${fmt(r.income)}</td>
+            <td data-label="Gastos">${fmt(r.spent)}<span class="det">sin alquiler ${fmt(r.noRent)}</span></td>
+            <td data-label="Ahorro" style="font-weight:600; color:${r.enCurso ? 'var(--muted)' : (r.savings >= 0 ? 'var(--green)' : 'var(--red)')};">${r.enCurso ? '—' : (r.savings >= 0 ? '+' : '') + fmt(r.savings)}${r.enCurso || r.p1 == null ? '' : `<span class="det"><i class="dot s1"></i>${esc(n1)} ${fmt(r.p1)}</span><span class="det"><i class="dot s2"></i>${esc(n2)} ${fmt(r.p2)}</span>`}</td>
             <td style="width:32px;"><button class="del-btn" data-delmonth="${r.key}" title="Borrar este mes del registro">✕</button></td>
           </tr>`).join('')}
         </table>`;
   }
+
+  // Paso "redondo" para las líneas de referencia del gráfico (100, 250, 500, 1000…)
+  function pasoBonito(bruto) {
+    const p = Math.pow(10, Math.floor(Math.log10(bruto)));
+    for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= bruto) return m * p;
+    return 10 * p;
+  }
+
+  // Barra con el extremo de datos redondeado y la base recta
+  function barra(x, y, w, h, redArriba, redAbajo) {
+    const r = Math.min(4, w / 2, h / (redArriba && redAbajo ? 2 : 1));
+    const a = redArriba ? r : 0, b = redAbajo ? r : 0;
+    return `M${x},${y + a}` +
+      (a ? `Q${x},${y} ${x + a},${y}` : '') + `H${x + w - a}` +
+      (a ? `Q${x + w},${y} ${x + w},${y + a}` : '') + `V${y + h - b}` +
+      (b ? `Q${x + w},${y + h} ${x + w - b},${y + h}` : '') + `H${x + b}` +
+      (b ? `Q${x},${y + h} ${x},${y + h - b}` : '') + 'Z';
+  }
+
+  function mesCorto(key) {
+    const [yy, mm] = key.split('-').map(Number);
+    const t = new Date(yy, mm - 1, 1).toLocaleDateString('es-ES', { month: 'short' }).replace('.', '');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
+  // Gráfico de columnas: cada mes, el ahorro de cada uno apilado y el total encima.
+  // Lo positivo crece hacia arriba y lo negativo hacia abajo desde la línea de 0.
+  function renderSavingsChart(o, n1, n2, enCurso) {
+    const el = $('savingsChart');
+    const filas = o.rows.filter(r => !r.enCurso && r.p1 != null).slice().reverse();   // orden cronológico
+    const nota = enCurso.length
+      ? `<div class="chart-note">${enCurso.map(r => monthLabel(r.key)).join(', ')} no aparece${enCurso.length > 1 ? 'n' : ''} hasta que estén puestos los dos sueldos.</div>` : '';
+    if (!filas.length) {
+      el.innerHTML = `<div class="empty">Sin meses completos en ${resumenYear}.</div>` + nota;
+      return;
+    }
+
+    const W = Math.max(280, Math.round(el.clientWidth || 600));
+    const H = 230, padL = 46, padR = 8, padT = 26, padB = 30;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+
+    let maxV = 0, minV = 0;
+    filas.forEach(r => {
+      maxV = Math.max(maxV, Math.max(0, r.p1) + Math.max(0, r.p2), r.savings);
+      minV = Math.min(minV, Math.min(0, r.p1) + Math.min(0, r.p2), r.savings);
+    });
+    const paso = pasoBonito((maxV - minV) / 3 || 100);
+    const top = Math.max(paso, Math.ceil(maxV / paso) * paso);
+    const bot = minV < 0 ? Math.floor((minV - paso * 0.35) / paso) * paso : 0;
+    const y = v => padT + (top - v) / (top - bot) * plotH;
+    const euros = v => Math.round(v).toLocaleString('es-ES') + ' €';
+    const corto = v => Math.abs(v) >= 1000
+      ? (v / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 }) + 'K'
+      : String(Math.round(v));
+    const color = c => c === 1 ? 'var(--serie1)' : 'var(--serie2)';
+
+    const slot = plotW / filas.length;
+    const bw = Math.min(24, slot * 0.5);
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Ahorro de cada mes, por persona" style="display:block; max-width:100%;">`;
+
+    // Líneas de referencia (finas y discretas) con su cifra a la izquierda
+    for (let v = bot; v <= top + 0.001; v += paso) {
+      const yy = Math.round(y(v)) + 0.5;
+      svg += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>`;
+      svg += `<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${corto(v)}</text>`;
+    }
+    const y0 = Math.round(y(0)) + 0.5;
+    svg += `<line x1="${padL}" x2="${W - padR}" y1="${y0}" y2="${y0}" stroke="var(--muted)" stroke-width="1"/>`;
+
+    filas.forEach((r, i) => {
+      const cx = padL + slot * i + slot / 2;
+      const x = cx - bw / 2;
+      const segs = [[1, r.p1], [2, r.p2]];
+      const pos = segs.filter(s => s[1] > 0), neg = segs.filter(s => s[1] < 0);
+      let arriba = 0, abajo = 0;
+      pos.forEach(([c, v], j) => {
+        const y1 = y(arriba + v), y2 = y(arriba) - (j > 0 ? 2 : 0);   // 2 px de aire entre tramos
+        arriba += v;
+        svg += `<path d="${barra(x, y1, bw, Math.max(1, y2 - y1), j === pos.length - 1, false)}" fill="${color(c)}"/>`;
+      });
+      neg.forEach(([c, v], j) => {
+        const y1 = y(abajo) + (j > 0 ? 2 : 0), y2 = y(abajo + v);
+        abajo += v;
+        svg += `<path d="${barra(x, y1, bw, Math.max(1, y2 - y1), false, j === neg.length - 1)}" fill="${color(c)}"/>`;
+      });
+      const ty = r.savings >= 0 ? y(arriba) - 8 : y(abajo) + 16;
+      svg += `<text x="${cx}" y="${ty}" text-anchor="middle" font-size="12" font-weight="600" fill="var(--text)">${euros(r.savings)}</text>`;
+      svg += `<text x="${cx}" y="${H - 9}" text-anchor="middle" font-size="12" fill="var(--muted)">${mesCorto(r.key)}</text>`;
+    });
+    // Zonas táctiles (toda la franja del mes, más grandes que la barra)
+    filas.forEach((r, i) => {
+      svg += `<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}" width="${slot}" height="${plotH}" fill="transparent" style="cursor:pointer;"/>`;
+    });
+    svg += '</svg>';
+
+    const leyenda = `<div class="chart-legend"><span><i class="dot s1"></i>${esc(n1)}</span><span><i class="dot s2"></i>${esc(n2)}</span><span class="muted" style="margin-left:auto; font-size:.78rem;">arriba: total de cada mes</span></div>`;
+    el.innerHTML = leyenda + `<div class="chart-wrap">${svg}<div class="chart-tip" hidden></div></div>` + nota;
+
+    // Detalle al pasar el ratón o tocar una columna
+    const tip = el.querySelector('.chart-tip');
+    const mostrar = i => {
+      const r = filas[i], ant = filas[i - 1];
+      const dif = ant ? r.savings - ant.savings : null;
+      tip.innerHTML = `<div class="t">${monthLabel(r.key)}</div>
+        <div><i class="dot s1"></i>${esc(n1)}: ${fmt(r.p1)}</div>
+        <div><i class="dot s2"></i>${esc(n2)}: ${fmt(r.p2)}</div>
+        <div>Total: <b>${fmt(r.savings)}</b></div>
+        ${dif != null ? `<div class="muted">${fmt(Math.abs(dif))} ${dif >= 0 ? 'más' : 'menos'} que en ${nombreMesMin(ant.key)}</div>` : ''}`;
+      tip.hidden = false;
+      const cx = padL + slot * i + slot / 2;
+      const tw = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(cx - tw / 2, W - tw)) + 'px';
+      tip.style.top = '0px';
+    };
+    el.querySelectorAll('.hit').forEach(h => {
+      const i = +h.dataset.i;
+      h.addEventListener('mouseenter', () => mostrar(i));
+      h.addEventListener('click', () => mostrar(i));
+      h.addEventListener('mouseleave', () => { tip.hidden = true; });
+    });
+  }
+
+  function nombreMesMin(key) { return monthLabel(key).split(' ')[0].toLowerCase(); }
+
+  // Redibujar el gráfico si cambia el ancho de la pantalla (girar el móvil, etc.)
+  let resumenResizeT = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resumenResizeT);
+    resumenResizeT = setTimeout(() => { if (activeTab === 'resumen') renderResumen(); }, 200);
+  });
 
   // ---------- Deshacer borrados ----------
   let undoSnapshot = null, undoTimer = null;
