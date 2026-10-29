@@ -533,7 +533,7 @@
 
       <div class="card">
         <h2>⚖️ Reparto de los gastos compartidos</h2>
-        <p class="muted" style="margin-bottom:10px;">Cómo se calcula la parte de cada uno (se ve en el ahorro por persona del Resumen). Los gastos marcados "Solo Iker" o "Solo Laura" siempre los paga esa persona entera.</p>
+        <p class="muted" style="margin-bottom:10px;">Cómo se calcula la parte de cada uno (se ve en el ahorro por persona del Resumen). "Según sueldo" usa lo que ingresa cada uno ese mes: su sueldo más sus ingresos extra (los "de ambos", a medias). Los gastos marcados "Solo Iker" o "Solo Laura" siempre los paga esa persona entera.</p>
         <div class="tabs" style="margin-bottom:0;">
           <button id="split-mitad">50 / 50</button>
           <button id="split-sueldo">Según sueldo</button>
@@ -604,7 +604,7 @@
 (function () {
   const STORAGE_KEY = 'gastosCasa_v1';
   // Actualizar esta fecha en cada cambio publicado (se muestra en Ajustes)
-  const APP_UPDATED = '21 de octubre de 2026 (resumen más claro)';
+  const APP_UPDATED = '29 de octubre de 2026 (los extras cuentan como sueldo en el reparto)';
 
   // ---------- Estado ----------
   function defaultState() {
@@ -1283,9 +1283,13 @@
       const fx = fxOf(k);
       const fijo1 = fx.de1, fijo2 = fx.de2;
       const shared = spentOf(k) - p1 - p2 - c1 - c2 - fijo1 - fijo2;
-      const cuota1 = porSueldo && (s1 + s2) > 0 ? s1 / (s1 + s2) : 0.5;
-      const mes1 = s1 + e1 + eAmbos / 2 - shared * cuota1 - p1 - c1 - fijo1;
-      const mes2 = s2 + e2 + eAmbos / 2 - shared * (1 - cuota1) - p2 - c2 - fijo2;
+      // Lo que ingresa cada uno ese mes: su sueldo + sus ingresos extra
+      // (los extra "de ambos", a medias). Con el reparto según sueldo, el
+      // porcentaje de lo compartido que paga cada uno sale de estas cifras.
+      const ingreso1 = s1 + e1 + eAmbos / 2, ingreso2 = s2 + e2 + eAmbos / 2;
+      const cuota1 = porSueldo && (ingreso1 + ingreso2) > 0 ? ingreso1 / (ingreso1 + ingreso2) : 0.5;
+      const mes1 = ingreso1 - shared * cuota1 - p1 - c1 - fijo1;
+      const mes2 = ingreso2 - shared * (1 - cuota1) - p2 - c2 - fijo2;
       ahorroAcum1 += mes1;
       ahorroAcum2 += mes2;
       porPersona[k] = { p1: mes1, p2: mes2 };
